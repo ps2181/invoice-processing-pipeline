@@ -1,0 +1,45 @@
+name: invoice_processing_pipeline
+version: "1.0.0"
+description: >
+  An OpenEnv environment for training AI agents on real-world invoice processing:
+  data extraction from OCR text, batch cleaning & normalisation, and
+  reconciliation against purchase orders with discrepancy detection.
+
+author: "OpenEnv Challenge Submission"
+license: "MIT"
+
+tags:
+  - openenv
+  - invoice
+  - data-extraction
+  - data-cleaning
+  - reconciliation
+  - finance
+
+environment:
+  module: server.app
+  class: InvoiceEnvironment
+  action: models.InvoiceAction
+  observation: models.InvoiceObservation
+
+tasks:
+  - id: easy
+    name: "Single Invoice Extraction"
+    description: "Extract structured fields (vendor, date, currency, total, line items) from a single invoice."
+    difficulty: easy
+
+  - id: medium
+    name: "Batch Invoice Cleaning"
+    description: "Clean and normalise a batch of messy invoices: fix dates, vendor typos, currency codes, and amounts."
+    difficulty: medium
+
+  - id: hard
+    name: "Invoice-PO Reconciliation"
+    description: "Extract, clean, and reconcile invoices against purchase orders. Flag overcharges, extra items, and missing items."
+    difficulty: hard
+
+endpoints:
+  reset: /reset
+  step: /step
+  state: /state
+  health: /health
