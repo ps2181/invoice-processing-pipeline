@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "invoice-processing-pipeline"
+version = "1.0.0"
+description = "OpenEnv environment for invoice data extraction, cleaning, and reconciliation."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.25.0",
+    "openai>=1.0.0",
+    "python-dotenv>=0.13",
+    "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+serve = "server.app:main"
