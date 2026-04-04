@@ -38,6 +38,11 @@ tasks:
     description: "Extract, clean, and reconcile invoices against purchase orders. Flag overcharges, extra items, and missing items."
     difficulty: hard
 
+  - id: expert
+    name: "Invoice Fraud Audit"
+    description: "Detect fraudulent invoices using approved vendor registry, market price catalog, and invoice history. Classify fraud type: phantom_vendor, price_gouging, duplicate_submission, or math_fraud."
+    difficulty: expert
+
 endpoints:
   reset: /reset
   step: /step

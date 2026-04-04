@@ -1,12 +1,16 @@
 """
 Invoice Processing Pipeline — Core Environment
 
-Three tasks:
+Four tasks:
   easy   — Extract structured fields from a single, relatively clean invoice.
   medium — Clean & normalise a batch of messy invoices (date formats, vendor
            name typos, currency symbols, duplicate detection).
   hard   — Extract, clean, AND reconcile against purchase orders; flag
            mismatches, overcharges, and missing items.
+  expert — Fraud audit: identify fraudulent invoices in a batch and classify
+           the fraud type (phantom_vendor, price_gouging, duplicate_submission,
+           math_fraud) using an approved vendor registry, market price catalog,
+           and invoice history.
 
 Each episode generates fresh synthetic data so the agent cannot memorize.
 """
@@ -55,6 +59,34 @@ ITEMS = [
 
 CURRENCIES = ["USD", "EUR", "GBP"]
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+# Expert task: vendors not in the approved registry
+PHANTOM_VENDORS = [
+    "QuickSupply Hub", "TechVendor Direct", "GlobalOffice Ltd",
+    "FastInvoice Inc", "EasyBill Solutions", "RapidProcure Co",
+    "BudgetSource LLC", "OfficeLink International",
+]
+
+# Expert task: market price ceilings derived from ITEMS ranges
+# Used to detect price_gouging (invoice unit_price > PRICE_GOUGE_FACTOR * market_max)
+MARKET_PRICE_MAX = {name: hi for name, _lo, hi in [
+    ("Laptop Computer", 899.99, 1299.99),
+    ("Wireless Mouse", 19.99, 49.99),
+    ("USB-C Hub", 29.99, 79.99),
+    ("Monitor Stand", 39.99, 89.99),
+    ("Keyboard", 49.99, 149.99),
+    ("Webcam HD", 59.99, 129.99),
+    ("Desk Lamp", 24.99, 69.99),
+    ("Notebook Pack", 9.99, 29.99),
+    ("Printer Paper (Ream)", 7.99, 14.99),
+    ("Whiteboard Markers (Set)", 5.99, 12.99),
+    ("External SSD 1TB", 79.99, 149.99),
+    ("Headset", 39.99, 99.99),
+    ("Cable Management Kit", 14.99, 34.99),
+    ("Ergonomic Chair", 299.99, 599.99),
+    ("Standing Desk Converter", 199.99, 399.99),
+]}
+PRICE_GOUGE_FACTOR = 1.5  # unit_price > 1.5x market max = price gouging
 
 
 def _rand_date(start_year: int = 2024, end_year: int = 2025) -> date:
@@ -469,6 +501,200 @@ def _discrepancy_match(submitted: Dict, expected: Dict) -> bool:
 
 
 # ===================================================================
+# TASK: EXPERT — invoice fraud audit
+# ===================================================================
+
+def _generate_expert_batch() -> Tuple[List[Dict], List[Dict], List[Dict], str]:
+    """
+    Generate 4-6 invoices with 2-3 fraudulent ones.
+    Returns: (invoices, ground_truth, invoice_history, reference_text)
+      - invoices: raw invoice dicts shown to the agent
+      - ground_truth: [{invoice_id, verdict, fraud_type}]
+      - invoice_history: prior legitimate invoices (for duplicate detection)
+      - reference_text: approved vendors + market prices + history (reference_data)
+    """
+    n_invoices = random.randint(4, 6)
+    n_fraudulent = random.randint(2, 3)
+
+    # Shuffle so fraud isn't always at the end
+    all_indices = list(range(n_invoices))
+    random.shuffle(all_indices)
+    fraud_indices = set(all_indices[:n_fraudulent])
+
+    # Assign distinct fraud types (no repeats if possible)
+    fraud_types = random.sample(
+        ["phantom_vendor", "price_gouging", "duplicate_submission", "math_fraud"],
+        min(n_fraudulent, 4)
+    )
+    fraud_type_map = {idx: fraud_types[i] for i, idx in enumerate(list(fraud_indices))}
+
+    invoices: List[Dict] = []
+    ground_truth: List[Dict] = []
+    invoice_history: List[Dict] = []  # legitimate invoices submitted previously
+
+    # Pre-generate 3 history invoices so duplicate_submission always has material
+    for _ in range(3):
+        h = _generate_invoice()
+        invoice_history.append(h)
+
+    for i in range(n_invoices):
+        inv = _generate_invoice()
+
+        if i in fraud_indices:
+            ftype = fraud_type_map[i]
+
+            if ftype == "phantom_vendor":
+                inv["vendor"] = random.choice(PHANTOM_VENDORS)
+
+            elif ftype == "price_gouging":
+                # Inflate one item's unit_price to 160-220% of market max
+                item = random.choice(inv["line_items"])
+                market_max = MARKET_PRICE_MAX.get(item["description"], item["unit_price"])
+                item["unit_price"] = round(market_max * random.uniform(1.6, 2.2), 2)
+                item["amount"] = round(item["qty"] * item["unit_price"], 2)
+                inv["total"] = round(sum(it["amount"] for it in inv["line_items"]), 2)
+
+            elif ftype == "duplicate_submission":
+                # Reuse a history invoice (same invoice_id & total)
+                original = random.choice(invoice_history)
+                inv = copy.deepcopy(original)
+                # Keep same invoice_id so the duplicate is detectable
+
+            elif ftype == "math_fraud":
+                # Inflate total by 8-18% beyond the real sum
+                real_total = round(sum(it["amount"] for it in inv["line_items"]), 2)
+                inv["total"] = round(real_total * random.uniform(1.08, 1.18), 2)
+
+            ground_truth.append({
+                "invoice_id": inv["invoice_id"],
+                "verdict": "flagged",
+                "fraud_type": ftype,
+            })
+        else:
+            invoice_history.append(inv)
+            ground_truth.append({
+                "invoice_id": inv["invoice_id"],
+                "verdict": "approved",
+                "fraud_type": None,
+            })
+
+        invoices.append(inv)
+
+    reference_text = _render_expert_reference(invoice_history)
+    return invoices, ground_truth, invoice_history, reference_text
+
+
+def _render_expert_batch(invoices: List[Dict]) -> str:
+    """Render invoices for fraud audit as readable text."""
+    lines = ["=== INVOICE AUDIT BATCH ===", ""]
+    for i, inv in enumerate(invoices):
+        sym = CURRENCY_SYMBOLS.get(inv["currency"], "$")
+        lines.append(f"--- Invoice {i+1} (ID: {inv['invoice_id']}) ---")
+        lines.append(f"Vendor: {inv['vendor']}")
+        lines.append(f"Date: {inv['date']}")
+        lines.append(f"Currency: {inv['currency']}")
+        lines.append(f"Total: {sym}{inv['total']:.2f}")
+        lines.append("Line Items:")
+        for it in inv["line_items"]:
+            lines.append(
+                f"  - {it['description']} | qty: {it['qty']} | "
+                f"unit_price: {sym}{it['unit_price']:.2f} | amount: {sym}{it['amount']:.2f}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _render_expert_reference(invoice_history: List[Dict]) -> str:
+    """Render reference data: approved vendor registry, market prices, invoice history."""
+    lines = ["=== REFERENCE DATA ===", ""]
+
+    # Approved Vendor Registry
+    lines.append("-- Approved Vendor Registry --")
+    for v in sorted(VENDORS):
+        lines.append(f"  {v}")
+    lines.append("")
+
+    # Market Price Catalog
+    lines.append("-- Market Price Catalog (maximum unit prices) --")
+    for item_name, max_price in sorted(MARKET_PRICE_MAX.items()):
+        lines.append(f"  {item_name}: max ${max_price:.2f}")
+    lines.append("")
+
+    # Recent Invoice History
+    lines.append("-- Recent Invoice History (previously approved invoices) --")
+    for h in invoice_history:
+        sym = CURRENCY_SYMBOLS.get(h["currency"], "$")
+        lines.append(
+            f"  {h['invoice_id']} | {h['vendor']} | {h['date']} | "
+            f"{h['currency']} | Total: {sym}{h['total']:.2f}"
+        )
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _grade_expert(submitted: Dict[str, Any], ground_truth: List[Dict]) -> Tuple[float, str]:
+    """
+    Grade fraud audit results.
+    submitted: {"audit_results": [{invoice_id, verdict, fraud_type, evidence}]}
+    Scoring per invoice:
+      - approved invoice, correctly approved:       1.0
+      - approved invoice, wrongly flagged:          0.0  (false positive)
+      - fraudulent invoice, correctly flagged+type: 1.0
+      - fraudulent invoice, flagged but wrong type: 0.5
+      - fraudulent invoice, wrongly approved:       0.0  (missed fraud)
+    """
+    audit_results = submitted.get("audit_results", [])
+    if not isinstance(audit_results, list) or not audit_results:
+        return 0.0, "Expected 'audit_results' key with a list of audit objects."
+
+    sub_map = {}
+    for r in audit_results:
+        if isinstance(r, dict) and "invoice_id" in r:
+            sub_map[r["invoice_id"]] = r
+
+    n = len(ground_truth)
+    total_score = 0.0
+    feedback_parts = []
+
+    for gt in ground_truth:
+        inv_id = gt["invoice_id"]
+        sub = sub_map.get(inv_id)
+
+        if sub is None:
+            feedback_parts.append(f"{inv_id}: missing from submission")
+            continue
+
+        sub_verdict = sub.get("verdict", "").lower().strip()
+        gt_verdict = gt["verdict"]
+
+        if gt_verdict == "approved":
+            if sub_verdict == "approved":
+                total_score += 1.0
+                feedback_parts.append(f"{inv_id}: correct (legitimate invoice approved)")
+            else:
+                feedback_parts.append(f"{inv_id}: false positive (legitimate invoice wrongly flagged as {sub.get('fraud_type', '?')})")
+
+        else:  # gt_verdict == "flagged"
+            if sub_verdict != "flagged":
+                feedback_parts.append(f"{inv_id}: missed fraud (expected {gt['fraud_type']}, approved instead)")
+            else:
+                sub_ftype = sub.get("fraud_type", "").lower().strip()
+                if sub_ftype == gt["fraud_type"]:
+                    total_score += 1.0
+                    feedback_parts.append(f"{inv_id}: correct fraud detected ({gt['fraud_type']})")
+                else:
+                    total_score += 0.5
+                    feedback_parts.append(
+                        f"{inv_id}: flagged but wrong type "
+                        f"(expected '{gt['fraud_type']}', got '{sub_ftype}')"
+                    )
+
+    score = total_score / n if n > 0 else 0.0
+    return round(min(score, 1.0), 4), "; ".join(feedback_parts)
+
+
+# ===================================================================
 # Environment
 # ===================================================================
 
@@ -504,6 +730,19 @@ class InvoiceEnvironment:
             ),
             "max_attempts": 5,
         },
+        "expert": {
+            "description": (
+                "Fraud audit: review a batch of invoices and identify which are fraudulent. "
+                "Use the reference data (approved vendor registry, market price catalog, invoice history) "
+                "to detect: phantom_vendor (vendor not in approved registry), "
+                "price_gouging (unit price > 150% of market max), "
+                "duplicate_submission (invoice already in history with same ID or vendor+date+total), "
+                "math_fraud (invoice total exceeds sum of line items). "
+                "Return {audit_results: [{invoice_id, verdict ('approved'|'flagged'), "
+                "fraud_type (null or one of the above), evidence (brief explanation)}]}."
+            ),
+            "max_attempts": 5,
+        },
     }
 
     def __init__(self):
@@ -513,6 +752,7 @@ class InvoiceEnvironment:
         self._reference_data: str = ""
         self._messy_invoices: List[Dict] = []
         self._expected_discrepancies: List[List[Dict]] = []
+        self._expert_ground_truth: List[Dict] = []
 
     def reset(self, task_id: str = "easy") -> Tuple[InvoiceObservation, float, bool, Dict]:
         """Reset the environment for a new episode."""
@@ -561,6 +801,13 @@ class InvoiceEnvironment:
             self._raw_text = _render_messy_batch(messy)
             self._reference_data = "\n\n".join(po_texts)
 
+        elif task_id == "expert":
+            invoices, gt, _history, reference_text = _generate_expert_batch()
+            self._ground_truth = invoices
+            self._expert_ground_truth = gt
+            self._raw_text = _render_expert_batch(invoices)
+            self._reference_data = reference_text
+
         task_info = self.TASKS[task_id]
         obs = InvoiceObservation(
             raw_text=self._raw_text,
@@ -587,10 +834,12 @@ class InvoiceEnvironment:
             score, feedback = _grade_easy(action.extracted_data, self._ground_truth)
         elif task_id == "medium":
             score, feedback = _grade_medium(action.extracted_data, self._ground_truth)
-        else:
+        elif task_id == "hard":
             score, feedback = _grade_hard(
                 action.extracted_data, self._ground_truth, self._expected_discrepancies
             )
+        else:  # expert
+            score, feedback = _grade_expert(action.extracted_data, self._expert_ground_truth)
 
         # Track best
         self._state.best_reward = max(self._state.best_reward, score)
@@ -613,8 +862,16 @@ class InvoiceEnvironment:
                 hint = "Make sure dates are YYYY-MM-DD, amounts are numbers, and all line items are included."
             elif task_id == "medium":
                 hint = "Check for vendor name typos, mixed date formats, and currency symbols mixed into amounts."
-            else:
+            elif task_id == "hard":
                 hint = "Compare each invoice line item against the PO. Look for price differences and items present in one but not the other."
+            else:  # expert
+                hint = (
+                    "Check each invoice against all 4 fraud types: "
+                    "(1) Is the vendor in the Approved Vendor Registry? "
+                    "(2) Do any unit prices exceed 150% of the market max? "
+                    "(3) Does this invoice_id or vendor+date+total appear in the invoice history? "
+                    "(4) Does the invoice total equal the sum of line item amounts?"
+                )
 
         obs = InvoiceObservation(
             raw_text=self._raw_text,

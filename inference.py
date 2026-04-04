@@ -159,7 +159,41 @@ SYSTEM_PROMPTS = {
         - "extra_item": item on invoice but not on PO
         - "missing_item": item on PO but not on invoice
 
+        IMPORTANT: Check EVERY line item in EVERY invoice against its matching PO.
+        Compare item descriptions, quantities, and unit prices one by one.
         Also apply all cleaning rules: fix vendor names, normalise dates, convert currencies, fix amounts.
+    """).strip(),
+
+    "expert": textwrap.dedent("""
+        You are a senior accounts-payable fraud auditor. You receive a batch of invoices
+        and reference data (approved vendor registry, market price catalog, invoice history).
+        Your job is to flag fraudulent invoices and identify the exact fraud type.
+
+        RESPOND WITH ONLY A VALID JSON OBJECT (no markdown, no explanation, no backticks).
+
+        Required JSON structure:
+        {
+            "audit_results": [
+                {
+                    "invoice_id": "INV-XXXXX",
+                    "verdict": "approved" or "flagged",
+                    "fraud_type": null or "phantom_vendor" or "price_gouging" or "duplicate_submission" or "math_fraud",
+                    "evidence": "one sentence explaining why approved or flagged"
+                }
+            ]
+        }
+
+        Fraud detection rules (check ALL four for every invoice):
+        1. phantom_vendor: Is the vendor name in the Approved Vendor Registry? If NOT → phantom_vendor
+        2. price_gouging: Is any unit_price > 1.5x the market max for that item? If YES → price_gouging
+        3. duplicate_submission: Does this invoice_id appear in the invoice history? Or same vendor+date+total? If YES → duplicate_submission
+        4. math_fraud: Does the invoice total equal the sum of all line item amounts? If total > sum → math_fraud
+
+        Rules:
+        - Every invoice must appear in audit_results with its exact invoice_id
+        - Legitimate invoices get verdict="approved" and fraud_type=null
+        - Flag only the PRIMARY fraud type per invoice (most severe)
+        - Check the reference data carefully before deciding
     """).strip(),
 }
 
@@ -173,18 +207,23 @@ def build_user_prompt(task_id: str, observation: Dict[str, Any], step: int) -> s
     parts = [f"Step {step} of {observation['max_attempts']}"]
 
     if observation.get("feedback"):
-        parts.append(f"\nFeedback from previous attempt:\n{observation['feedback']}")
+        parts.append(
+            f"\n⚠️ GRADER FEEDBACK — you MUST fix every issue listed below:\n"
+            f"{observation['feedback']}\n"
+            f"Carefully address each point before submitting again."
+        )
 
     if observation.get("hint"):
-        parts.append(f"\nHint: {observation['hint']}")
+        parts.append(f"\n💡 Hint: {observation['hint']}")
 
     parts.append(f"\nTask: {observation['task_description']}")
-    parts.append(f"\n--- RAW INVOICE DATA ---\n{observation['raw_text']}")
+    parts.append(f"\n--- INVOICE DATA ---\n{observation['raw_text']}")
 
     if observation.get("reference_data"):
-        parts.append(f"\n--- PURCHASE ORDER DATA ---\n{observation['reference_data']}")
+        label = "REFERENCE DATA" if task_id == "expert" else "PURCHASE ORDER DATA"
+        parts.append(f"\n--- {label} ---\n{observation['reference_data']}")
 
-    parts.append("\nExtract/clean the data and respond with ONLY valid JSON:")
+    parts.append("\nRespond with ONLY valid JSON, no markdown or extra text:")
 
     return "\n".join(parts)
 
@@ -314,7 +353,7 @@ def main() -> None:
 
     scores = {}
     try:
-        for task_id in ["easy", "medium", "hard"]:
+        for task_id in ["easy", "medium", "hard", "expert"]:
             scores[task_id] = run_task(client, env, task_id)
             print(flush=True)
 
