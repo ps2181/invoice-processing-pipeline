@@ -43,6 +43,21 @@ tasks:
     description: "Detect fraudulent invoices using approved vendor registry, market price catalog, and invoice history. Classify fraud type: phantom_vendor, price_gouging, duplicate_submission, or math_fraud."
     difficulty: expert
 
+  - id: adversarial
+    name: "Adversarial Invoice Extraction"
+    description: "Extract from an invoice with OCR corruption (0→O, 1→l, 5→S), a misleading SUBTOTAL trap, fabricated TAX/ADJUSTMENT lines, and a multi-currency FX noise line. The TOTAL line is always correct."
+    difficulty: hard
+
+  - id: negotiate
+    name: "Negotiated Invoice Clarification"
+    description: "Ask clarification questions (submit {question: str}) about an ambiguous invoice, then submit full structured extraction. Bonus awarded for solving correctly with ≤2 questions."
+    difficulty: medium
+
+  - id: supply_chain
+    name: "Supply Chain Anomaly Detection"
+    description: "Identify quantity shortfalls, price spikes, unauthorized substitutions, and phantom deliveries in a set of supply chain delivery records."
+    difficulty: expert
+
 endpoints:
   reset: /reset
   step: /step

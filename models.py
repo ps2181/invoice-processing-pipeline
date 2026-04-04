@@ -25,7 +25,11 @@ class InvoiceAction(BaseModel):
             "Structure depends on the task. "
             "Easy: {vendor, date, currency, total, line_items: [{description, qty, unit_price, amount}]}. "
             "Medium: {invoices: [{vendor, date, currency, total, line_items}]} (batch of cleaned invoices). "
-            "Hard: {invoices: [...], discrepancies: [{invoice_idx, type, detail, expected, actual}]}."
+            "Hard: {invoices: [...], discrepancies: [{invoice_idx, type, detail, expected, actual}]}. "
+            "Adversarial: same schema as easy — {vendor, date, currency, total, line_items}. "
+            "Negotiate: either {'question': str} to ask a clarification, or the full extraction "
+            "(same schema as easy). "
+            "Supply_chain: {'anomalies': [{'delivery_id', 'anomaly_type', 'detail'}]}."
         ),
     )
     explanation: str = Field(
@@ -42,7 +46,7 @@ class InvoiceObservation(BaseModel):
     """What the agent sees each turn."""
 
     raw_text: str = Field(..., description="Raw invoice text (OCR-style or CSV-style)")
-    task_id: str = Field(..., description="easy | medium | hard")
+    task_id: str = Field(..., description="easy | medium | hard | expert | adversarial | negotiate | supply_chain")
     difficulty: str = Field(..., description="Same as task_id")
     task_description: str = Field(..., description="What the agent should do")
     attempt_number: int = Field(default=0, description="Current attempt (0 = just reset)")
@@ -52,6 +56,18 @@ class InvoiceObservation(BaseModel):
     reference_data: str = Field(
         default="",
         description="For hard task: purchase order data to reconcile against",
+    )
+    reward_breakdown: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Per-field score breakdown for easy, adversarial, and negotiate tasks. "
+            "Example: {'vendor': {'score': 0.15, 'max': 0.15, 'status': 'correct'}, "
+            "'date': {'score': 0.0, 'max': 0.10, 'status': 'wrong'}, ...}"
+        ),
+    )
+    conversation_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="For negotiate task: list of {'role': 'agent'|'env', 'content': str} turns.",
     )
 
 
@@ -69,3 +85,19 @@ class InvoiceState(BaseModel):
     last_reward: float = Field(default=0.0)
     best_reward: float = Field(default=0.0)
     rewards: List[float] = Field(default_factory=list)
+    conversation_history: List[Dict[str, Any]] = Field(default_factory=list)
+    clarification_count: int = Field(default=0)
+
+
+# ---------------------------------------------------------------------------
+# Supply Chain (documentation model)
+# ---------------------------------------------------------------------------
+
+class SupplyChainAnomalyItem(BaseModel):
+    delivery_id: str
+    anomaly_type: str  # quantity_shortfall | price_spike | unauthorized_substitution | phantom_delivery
+    detail: str
+
+
+class SupplyChainAction(BaseModel):
+    anomalies: List[SupplyChainAnomalyItem]

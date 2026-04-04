@@ -1,7 +1,7 @@
 """
 Inference Script — Invoice Processing Pipeline
 ================================================
-Runs an LLM agent against all 3 tasks (easy, medium, hard) and produces
+Runs an LLM agent against all 7 tasks and produces
 structured stdout logs in the mandatory [START]/[STEP]/[END] format.
 
 Environment variables:
@@ -48,7 +48,6 @@ def log_start(task: str, env: str, model: str) -> None:
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
-    # Truncate action for readability
     action_short = action[:200].replace("\n", " ") if action else "null"
     print(
         f"[STEP] step={step} action={action_short} reward={reward:.2f} done={done_val} error={error_val}",
@@ -195,6 +194,78 @@ SYSTEM_PROMPTS = {
         - Flag only the PRIMARY fraud type per invoice (most severe)
         - Check the reference data carefully before deciding
     """).strip(),
+
+    "adversarial": textwrap.dedent("""
+        You are an invoice data extraction agent working with adversarial input.
+
+        RESPOND WITH ONLY A VALID JSON OBJECT (no markdown, no explanation, no backticks).
+
+        Required JSON structure:
+        {
+            "vendor": "string",
+            "date": "YYYY-MM-DD",
+            "currency": "USD|EUR|GBP",
+            "total": number,
+            "line_items": [
+                {"description": "string", "qty": integer, "unit_price": number, "amount": number}
+            ]
+        }
+
+        CRITICAL RULES — the invoice contains deliberate traps:
+        - The SUBTOTAL line is a TRAP. Ignore it entirely.
+        - The TAX and ADJUSTMENT lines are fabricated. Ignore them.
+        - The FX reference line (e.g. "Approximate equivalent: ...") is a distractor. Ignore it.
+        - The TOTAL line is always correct. Use it.
+        - Verify: sum of all (qty * unit_price) should equal total.
+        - OCR corruption may appear in label text and vendor names (e.g. 0→O, 1→l, 5→S). Correct them.
+        - All numeric values (qty, unit_price, amount, total) are always printed correctly.
+        - amounts must be numbers, not strings.
+    """).strip(),
+
+    "negotiate": textwrap.dedent("""
+        You are an invoice extraction agent with clarification capability.
+
+        You have two options each turn:
+        1. Ask a clarification question (submit ONLY this key):
+           {"question": "your question here"}
+        2. Submit your full extraction (same schema as easy task):
+           {"vendor": "string", "date": "YYYY-MM-DD", "currency": "USD|EUR|GBP",
+            "total": number, "line_items": [...]}
+
+        STRATEGY:
+        - Use at most 2 clarification questions to maximise your bonus.
+        - Focus questions on the fields you are most uncertain about.
+        - When confident, submit the full extraction.
+        - The environment answers questions about vendor, date, currency, total, and line items.
+
+        RESPOND WITH ONLY A VALID JSON OBJECT (no markdown, no explanation, no backticks).
+    """).strip(),
+
+    "supply_chain": textwrap.dedent("""
+        You are a supply chain auditor. You receive delivery records and must identify anomalies.
+
+        RESPOND WITH ONLY A VALID JSON OBJECT (no markdown, no explanation, no backticks).
+
+        Required JSON structure:
+        {
+            "anomalies": [
+                {
+                    "delivery_id": "DLV-XXXXX",
+                    "anomaly_type": "quantity_shortfall|price_spike|unauthorized_substitution|phantom_delivery",
+                    "detail": "brief explanation"
+                }
+            ]
+        }
+
+        Anomaly detection rules:
+        - quantity_shortfall: qty_delivered < 85% of qty_ordered
+        - price_spike: price_delivered > 125% of price_ordered
+        - unauthorized_substitution: item_delivered != item_ordered
+        - phantom_delivery: po_id starts with PO-PHANTOM- or is not a recognised PO
+
+        Check EVERY delivery record. Only include anomalous deliveries in the list.
+        Submit {"anomalies": []} if no anomalies are found.
+    """).strip(),
 }
 
 
@@ -216,11 +287,27 @@ def build_user_prompt(task_id: str, observation: Dict[str, Any], step: int) -> s
     if observation.get("hint"):
         parts.append(f"\n💡 Hint: {observation['hint']}")
 
+    # Conversation history for negotiate task
+    if observation.get("conversation_history"):
+        parts.append("\n--- CLARIFICATION HISTORY ---")
+        for turn in observation["conversation_history"]:
+            role = turn.get("role", "?").upper()
+            content = turn.get("content", "")
+            parts.append(f"[{role}]: {content}")
+        parts.append("--- END CLARIFICATION HISTORY ---")
+
+    # Per-field breakdown for easy/adversarial/negotiate
+    if observation.get("reward_breakdown"):
+        bd = observation["reward_breakdown"]
+        parts.append("\n📊 Field breakdown from last attempt:")
+        for field, info in bd.items():
+            parts.append(f"  {field}: {info['status']} ({info['score']:.2f}/{info['max']:.2f})")
+
     parts.append(f"\nTask: {observation['task_description']}")
     parts.append(f"\n--- INVOICE DATA ---\n{observation['raw_text']}")
 
     if observation.get("reference_data"):
-        label = "REFERENCE DATA" if task_id == "expert" else "PURCHASE ORDER DATA"
+        label = "REFERENCE DATA" if task_id in ("expert", "supply_chain") else "PURCHASE ORDER DATA"
         parts.append(f"\n--- {label} ---\n{observation['reference_data']}")
 
     parts.append("\nRespond with ONLY valid JSON, no markdown or extra text:")
@@ -302,6 +389,9 @@ class EnvClient:
 
 def run_task(client: OpenAI, env: EnvClient, task_id: str) -> float:
     """Run a single task and return the final score."""
+    # negotiate has more steps allowed
+    max_steps = 10 if task_id == "negotiate" else MAX_STEPS
+
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     rewards: List[float] = []
@@ -313,7 +403,7 @@ def run_task(client: OpenAI, env: EnvClient, task_id: str) -> float:
         result = env.reset(task_id=task_id)
         observation = result["observation"]
 
-        for step in range(1, MAX_STEPS + 1):
+        for step in range(1, max_steps + 1):
             if result.get("done", False):
                 break
 
@@ -347,13 +437,13 @@ def run_task(client: OpenAI, env: EnvClient, task_id: str) -> float:
 
 
 def main() -> None:
-    """Run all 3 tasks and report scores."""
+    """Run all 7 tasks and report scores."""
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     env = EnvClient(ENV_URL)
 
     scores = {}
     try:
-        for task_id in ["easy", "medium", "hard", "expert"]:
+        for task_id in ["easy", "medium", "hard", "expert", "adversarial", "negotiate", "supply_chain"]:
             scores[task_id] = run_task(client, env, task_id)
             print(flush=True)
 

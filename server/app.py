@@ -188,7 +188,20 @@ def grader(req: StepRequest):
         score, feedback = _grade_hard(
             action.extracted_data, env._ground_truth, env._expected_discrepancies
         )
-    else:
+    elif task_id == "adversarial":
+        from server.environment import _grade_adversarial
+        score, feedback, _bd = _grade_adversarial(action.extracted_data, env._ground_truth)
+    elif task_id == "negotiate":
+        from server.environment import _grade_negotiate
+        score, feedback, _bd = _grade_negotiate(
+            action.extracted_data, env._ground_truth, env._state.clarification_count
+        )
+    elif task_id == "supply_chain":
+        from server.environment import _grade_supply_chain
+        score, feedback = _grade_supply_chain(
+            action.extracted_data, env._expected_sc_anomalies
+        )
+    else:  # expert
         from server.environment import _grade_expert
         score, feedback = _grade_expert(action.extracted_data, env._expert_ground_truth)
 
