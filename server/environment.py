@@ -478,7 +478,7 @@ def _grade_medium(submitted: Dict[str, Any], ground_truths: List[Dict[str, Any]]
     """Grade batch cleaning. submitted should have 'invoices' key."""
     sub_invoices = submitted.get("invoices", [])
     if not isinstance(sub_invoices, list):
-        return 0.0, "Expected 'invoices' key with a list of cleaned invoices."
+        return _clamp_score(0.0), "Expected 'invoices' key with a list of cleaned invoices."
 
     n_expected = len(ground_truths)
     total_score = 0.0
@@ -726,7 +726,7 @@ def _render_expert_reference(invoice_history: List[Dict]) -> str:
 def _grade_expert(submitted: Dict[str, Any], ground_truth: List[Dict]) -> Tuple[float, str]:
     audit_results = submitted.get("audit_results", [])
     if not isinstance(audit_results, list) or not audit_results:
-        return 0.0, "Expected 'audit_results' key with a list of audit objects."
+        return _clamp_score(0.0), "Expected 'audit_results' key with a list of audit objects."
 
     sub_map = {}
     for r in audit_results:
@@ -1023,12 +1023,12 @@ def _grade_supply_chain(
     """
     sub_list = submitted.get("anomalies", [])
     if not isinstance(sub_list, list):
-        return 0.0, "Expected 'anomalies' key with a list."
+        return _clamp_score(0.0), "Expected 'anomalies' key with a list."
 
     if not expected_anomalies:
         if not sub_list:
-            return 1.0, "No anomalies expected; none submitted."
-        return 0.5, f"No anomalies expected but {len(sub_list)} submitted (false positives)."
+            return _clamp_score(1.0), "No anomalies expected; none submitted."
+        return _clamp_score(0.5), f"No anomalies expected but {len(sub_list)} submitted (false positives)."
 
     matched_full = 0
     matched_partial = 0
@@ -1258,7 +1258,7 @@ class InvoiceEnvironment:
             reward_breakdown=None,
             conversation_history=[],
         )
-        return obs, 0.0, False, {"episode_id": self._state.episode_id}
+        return obs, _clamp_score(0.0), False, {"episode_id": self._state.episode_id}
 
     def step(self, action: InvoiceAction) -> Tuple[InvoiceObservation, float, bool, Dict]:
         """Process one agent action."""
@@ -1292,9 +1292,9 @@ class InvoiceEnvironment:
                 reward_breakdown=None,
                 conversation_history=list(self._state.conversation_history),
             )
-            self._state.last_reward = 0.0
-            self._state.rewards.append(0.0)
-            return obs, 0.0, False, {
+            self._state.last_reward = _clamp_score(0.0)
+            self._state.rewards.append(_clamp_score(0.0))
+            return obs, _clamp_score(0.0), False, {
                 "episode_id": self._state.episode_id,
                 "best_reward": self._state.best_reward,
                 "clarification_answered": True,
