@@ -57,9 +57,12 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    # Clamp score to (0.01, 0.99) so formatting never rounds to exactly 0.00 or 1.00
+    safe_score = max(0.01, min(0.99, score))
+    safe_rewards = [max(0.01, min(0.99, r)) for r in rewards]
+    rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={safe_score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -424,7 +427,7 @@ def run_task(client: OpenAI, env: EnvClient, task_id: str) -> float:
             if done:
                 break
 
-        score = max(rewards) if rewards else 0.0
+        score = max(rewards) if rewards else 0.01
         success = score >= SUCCESS_THRESHOLD
 
     except Exception as e:
