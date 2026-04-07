@@ -130,8 +130,13 @@ SC_ANOMALY_TYPES = [
 # ---------------------------------------------------------------------------
 
 def _clamp_score(score: float) -> float:
-    """Clamp to strictly open interval (0, 1) — validator rejects 0.0 and 1.0 exactly."""
-    return round(max(0.0001, min(0.9999, float(score))), 4)
+    """Clamp to strictly open interval (0, 1).
+    Uses 0.01 / 0.99 bounds so the value is safely representable at 2-decimal-place
+    formatting without rounding to exactly 0.00 or 1.00."""
+    s = float(score)
+    if s != s:  # NaN guard
+        s = 0.0
+    return round(max(0.01, min(0.99, s)), 4)
 
 
 _PERF_HISTORY: Dict[str, collections.deque] = {
