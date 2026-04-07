@@ -28,6 +28,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Mount Gradio web UI at /web
+try:
+    import gradio as gr
+    from server.web_ui import build_ui
+    _gradio_app = build_ui()
+    app = gr.mount_gradio_app(app, _gradio_app, path="/web")
+except Exception as _e:
+    import warnings
+    warnings.warn(f"Gradio UI not loaded: {_e}")
+
 # ---------------------------------------------------------------------------
 # Session registry — one InvoiceEnvironment per episode_id
 # Thread-safe, capped at MAX_SESSIONS to bound memory on vcpu=2 / 8gb
