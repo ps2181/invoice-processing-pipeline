@@ -12,7 +12,7 @@ import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 import sys
@@ -206,6 +206,74 @@ def grader(req: StepRequest):
         score, feedback = _grade_expert(action.extracted_data, env._expert_ground_truth)
 
     return {"score": score, "feedback": feedback}
+
+
+def _clamp(v: float) -> float:
+    return max(0.01, min(0.99, float(v)))
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint — required by openenv-core GenericEnvClient."""
+    await websocket.accept()
+    env = InvoiceEnvironment()
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            msg_type = msg.get("type")
+            data = msg.get("data", {})
+
+            if msg_type == "reset":
+                task_id = data.get("task_id", "easy")
+                obs, reward, done, info = env.reset(task_id=task_id)
+                await websocket.send_json({
+                    "type": "observation",
+                    "data": {
+                        "observation": obs.model_dump(),
+                        "reward": _clamp(reward),
+                        "done": done,
+                        "info": info,
+                    },
+                })
+
+            elif msg_type == "step":
+                extracted = data.get("extracted_data", {})
+                explanation = data.get("explanation", "")
+                action = InvoiceAction(extracted_data=extracted, explanation=explanation)
+                obs, reward, done, info = env.step(action)
+                await websocket.send_json({
+                    "type": "observation",
+                    "data": {
+                        "observation": obs.model_dump(),
+                        "reward": _clamp(reward),
+                        "done": done,
+                        "info": info,
+                    },
+                })
+
+            elif msg_type == "state":
+                await websocket.send_json({
+                    "type": "state",
+                    "data": env.state.model_dump(),
+                })
+
+            elif msg_type == "close":
+                break
+
+            else:
+                await websocket.send_json({
+                    "type": "error",
+                    "data": {"message": f"Unknown message type: {msg_type}"},
+                })
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "data": {"message": str(e)}})
+        except Exception:
+            pass
 
 
 def main():
