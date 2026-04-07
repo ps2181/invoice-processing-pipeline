@@ -129,6 +129,11 @@ SC_ANOMALY_TYPES = [
 # Dynamic difficulty: class-level performance tracker (shared across sessions)
 # ---------------------------------------------------------------------------
 
+def _clamp_score(score: float) -> float:
+    """Clamp to strictly open interval (0, 1) — validator rejects 0.0 and 1.0 exactly."""
+    return round(max(0.0001, min(0.9999, float(score))), 4)
+
+
 _PERF_HISTORY: Dict[str, collections.deque] = {
     task: collections.deque(maxlen=10)
     for task in ["easy", "medium", "hard", "expert", "adversarial", "negotiate", "supply_chain"]
@@ -358,7 +363,7 @@ def _grade_easy_with_breakdown(
         )
     breakdown["line_items"] = {"score": li_score, "max": 0.50, "status": li_status}
 
-    return round(min(score, 1.0), 4), "; ".join(feedback_parts), breakdown
+    return _clamp_score(score), "; ".join(feedback_parts), breakdown
 
 
 def _grade_easy(submitted: Dict[str, Any], ground_truth: Dict[str, Any]) -> Tuple[float, str]:
@@ -491,7 +496,7 @@ def _grade_medium(submitted: Dict[str, Any], ground_truths: List[Dict[str, Any]]
         feedback_parts.append(f"Extra invoices submitted: {len(sub_invoices) - n_expected}")
 
     avg = total_score / n_expected if n_expected > 0 else 0.0
-    return round(min(avg, 1.0), 4), "; ".join(feedback_parts)
+    return _clamp_score(avg), "; ".join(feedback_parts)
 
 
 # ===================================================================
@@ -589,7 +594,7 @@ def _grade_hard(submitted: Dict[str, Any], ground_truths: List[Dict[str, Any]],
 
     total = extraction_score * 0.60 + disc_score * 0.40
     feedback = f"Extraction: {extraction_score:.2f}; {disc_fb}"
-    return round(min(total, 1.0), 4), feedback
+    return _clamp_score(total), feedback
 
 
 def _discrepancy_match(submitted: Dict, expected: Dict) -> bool:
@@ -765,7 +770,7 @@ def _grade_expert(submitted: Dict[str, Any], ground_truth: List[Dict]) -> Tuple[
                     )
 
     score = total_score / n if n > 0 else 0.0
-    return round(min(score, 1.0), 4), "; ".join(feedback_parts)
+    return _clamp_score(score), "; ".join(feedback_parts)
 
 
 # ===================================================================
@@ -882,7 +887,7 @@ def _grade_negotiate(
         elif clarification_count <= 4:
             bonus = round(base_score * 0.10, 4)
 
-    final = round(min(base_score + bonus, 1.0), 4)
+    final = _clamp_score(base_score + bonus)
     bonus_note = (
         f"; Bonus: +{bonus:.4f} ({clarification_count} clarification(s) used)"
         if bonus > 0 else ""
@@ -1060,7 +1065,7 @@ def _grade_supply_chain(
         f"Anomalies: {matched_full} exact + {matched_partial} partial of "
         f"{len(expected_anomalies)} expected; precision={precision:.2f}, recall={recall:.2f}"
     )
-    return round(min(score, 1.0), 4), feedback
+    return _clamp_score(score), feedback
 
 
 # ===================================================================
@@ -1384,7 +1389,7 @@ class InvoiceEnvironment:
             conversation_history=list(self._state.conversation_history),
         )
 
-        return obs, round(reward, 4), done, {
+        return obs, _clamp_score(reward), done, {
             "episode_id": self._state.episode_id,
             "best_reward": self._state.best_reward,
         }
