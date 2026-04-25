@@ -1079,6 +1079,151 @@ def _grade_supply_chain(
 
 
 # ===================================================================
+# Long-Horizon grader
+# ===================================================================
+
+def _grade_long_horizon(
+    data: Dict,
+    state: Any,
+    lh_gt: List[Dict],
+    expected_discs: List[List[Dict]],
+    expert_gt: List[Dict],
+    po_texts: List[str],
+) -> Tuple[float, str]:
+    """
+    Grade based on current phase. Sparse reward design:
+    - Intermediate steps within a phase: small partial credit (max 0.30)
+    - Phase completion step (every 5th): full phase reward (max 0.99)
+    """
+    phase = state.phase
+    attempt = state.step_count
+    phase_step = ((attempt - 1) % 5) + 1  # 1-5 within phase
+    is_phase_end = (phase_step == 5)
+
+    if phase == 1:
+        # Extract 3 invoices
+        invoices = data.get("invoices", [data] if "vendor" in data else [])
+        if not invoices:
+            return _clamp_score(0.01), "Phase 1: Submit {invoices: [...]} with extracted invoice data."
+        matched = 0
+        for inv, gt in zip(invoices, lh_gt):
+            v_ok = str(inv.get("vendor", "")).lower()[:6] == str(gt.get("vendor", "")).lower()[:6]
+            t_ok = abs(float(inv.get("total", 0)) - float(gt.get("total", 0))) < 1.0
+            if v_ok and t_ok:
+                matched += 1
+        frac = matched / max(len(lh_gt), 1)
+        partial = frac * 0.30
+        if is_phase_end:
+            score = 0.50 + frac * 0.49
+            return _clamp_score(score), f"Phase 1 complete: {matched}/{len(lh_gt)} invoices correct. Phase 2 unlocked — POs now visible in reference_data."
+        return _clamp_score(partial), f"Phase 1 step {phase_step}/5: {matched}/{len(lh_gt)} invoices match so far. Complete extraction before step 5."
+
+    elif phase == 2:
+        # Reconcile vs POs
+        recs = data.get("reconciliation", [])
+        if not recs:
+            return _clamp_score(0.01), "Phase 2: Submit {reconciliation: [{invoice_id, status, discrepancies:[...]}]}."
+        found_discs = sum(len(r.get("discrepancies", [])) for r in recs)
+        total_expected = sum(len(d) for d in expected_discs)
+        frac = min(found_discs / max(total_expected, 1), 1.0)
+        partial = frac * 0.30
+        if is_phase_end:
+            score = 0.50 + frac * 0.49
+            return _clamp_score(score), f"Phase 2 complete: found {found_discs}/{total_expected} discrepancies. Phase 3 unlocked — fraud registry + catalog now visible."
+        return _clamp_score(partial), f"Phase 2 step {phase_step}/5: {found_discs}/{total_expected} discrepancies found."
+
+    elif phase == 3:
+        # Fraud audit
+        score, feedback = _grade_expert(data, expert_gt)
+        if is_phase_end:
+            return _clamp_score(score), f"Phase 3 complete: fraud audit score={score:.2f}. Phase 4 unlocked — risk forecast required."
+        return _clamp_score(score * 0.30), f"Phase 3 step {phase_step}/5: audit score={score:.2f} (partial)."
+
+    elif phase == 4:
+        # Risk forecast
+        risk = data.get("risk_report", {})
+        if not risk:
+            return _clamp_score(0.01), "Phase 4: Submit {risk_report: {high_risk_vendor, reason, estimated_exposure_usd, recommended_action}}."
+        has_vendor   = bool(risk.get("high_risk_vendor"))
+        has_reason   = len(str(risk.get("reason", ""))) > 20
+        has_exposure = float(risk.get("estimated_exposure_usd", 0)) > 0
+        has_action   = bool(risk.get("recommended_action"))
+        score = (has_vendor * 0.25 + has_reason * 0.35 + has_exposure * 0.20 + has_action * 0.20)
+        if is_phase_end:
+            return _clamp_score(score), f"Phase 4 complete: risk report score={score:.2f}. Full investigation done."
+        return _clamp_score(score * 0.40), f"Phase 4 step {phase_step}/5: partial risk report (score={score:.2f})."
+
+    return _clamp_score(0.01), "Unknown phase."
+
+
+# ===================================================================
+# Personalized grader + targeted generator
+# ===================================================================
+
+def _grade_personalized(data: Dict, gt: Dict) -> Tuple[float, str, Dict[str, float]]:
+    """Grade single invoice extraction, return per-field scores for profile update."""
+    field_scores: Dict[str, float] = {"vendor": 0.0, "date": 0.0, "math": 0.0, "completeness": 0.0}
+    feedback_parts = []
+
+    # Vendor
+    pred_v = str(data.get("vendor", "")).strip().lower()
+    true_v = str(gt.get("vendor", "")).strip().lower()
+    field_scores["vendor"] = 1.0 if pred_v[:6] == true_v[:6] else 0.0
+    feedback_parts.append(f"vendor={'✓' if field_scores['vendor'] else '✗'}")
+
+    # Date
+    import re as _re
+    pred_d = str(data.get("date", ""))
+    true_d = str(gt.get("date", ""))
+    field_scores["date"] = 1.0 if pred_d == true_d else (0.5 if pred_d[:7] == true_d[:7] else 0.0)
+    feedback_parts.append(f"date={'✓' if field_scores['date'] == 1.0 else ('~' if field_scores['date'] else '✗')}")
+
+    # Math: total == sum of line items
+    line_items = data.get("line_items", [])
+    if line_items:
+        try:
+            computed = round(sum(float(it.get("amount", 0)) for it in line_items), 2)
+            claimed = float(data.get("total", 0))
+            field_scores["math"] = 1.0 if abs(computed - claimed) < 0.02 else 0.0
+        except (TypeError, ValueError):
+            field_scores["math"] = 0.0
+    feedback_parts.append(f"math={'✓' if field_scores['math'] else '✗'}")
+
+    # Completeness: all line items present
+    expected_n = len(gt.get("line_items", []))
+    got_n = len(line_items)
+    field_scores["completeness"] = min(got_n / max(expected_n, 1), 1.0)
+    feedback_parts.append(f"completeness={got_n}/{expected_n}")
+
+    total = (field_scores["vendor"] * 0.30 + field_scores["date"] * 0.20
+             + field_scores["math"] * 0.25 + field_scores["completeness"] * 0.25)
+    return _clamp_score(total), " | ".join(feedback_parts), field_scores
+
+
+def _generate_invoice_targeting(weak_field: str) -> Dict:
+    """Generate an invoice that stresses the weak field to force practice."""
+    inv = _generate_invoice()
+    if weak_field == "vendor":
+        # Use an unusual vendor name (harder to extract correctly)
+        inv["vendor"] = random.choice([
+            "O'Brien & MacAllister Ltd", "Ü-Tech GmbH", "Al-Rashid Trading Co.",
+            "Saint-Gobain Consulting", "D'Arcy Partners LLC"
+        ])
+    elif weak_field == "date":
+        # Non-standard date format in raw text (will be messy)
+        pass  # messiness applied by _make_messy_invoice
+    elif weak_field == "math":
+        # Intentionally introduce a small math discrepancy for agent to spot and correct
+        if inv.get("line_items"):
+            inv["total"] = round(inv["total"] * random.uniform(0.98, 1.02), 2)
+    elif weak_field == "completeness":
+        # More line items to capture
+        extra = _generate_invoice()
+        inv["line_items"] = inv.get("line_items", []) + extra.get("line_items", [])[:2]
+    return inv
+
+
+# ===================================================================
 # Environment
 # ===================================================================
 
@@ -1167,6 +1312,36 @@ class InvoiceEnvironment(_OpenEnvBase):
             ),
             "max_attempts": 5,
         },
+        "long_horizon": {
+            "description": (
+                "Multi-phase financial investigation spanning 20 steps. "
+                "The episode unfolds across 4 phases — each phase unlocks new documents and builds on prior findings.\n"
+                "Phase 1 (steps 1-5): Extract structured data from 3 invoices. "
+                "Return {invoices: [{vendor, date, currency, total, line_items}]}.\n"
+                "Phase 2 (steps 6-10): Reconcile extracted invoices against purchase orders revealed in this phase. "
+                "Return {reconciliation: [{invoice_id, status, discrepancies: [...]}]}.\n"
+                "Phase 3 (steps 11-15): Audit all invoices for fraud using the full vendor registry and price catalog revealed here. "
+                "Return {audit: [{invoice_id, verdict, fraud_type, confidence}]}.\n"
+                "Phase 4 (steps 16-20): Forecast risk: given your findings, predict which supplier poses highest risk next quarter. "
+                "Return {risk_report: {high_risk_vendor, reason, estimated_exposure_usd, recommended_action}}.\n"
+                "Rewards are sparse — intermediate steps give small partial credit; full reward only when a phase is completed correctly. "
+                "Context from each phase is carried forward into the next phase observation."
+            ),
+            "max_attempts": 20,
+        },
+        "personalized": {
+            "description": (
+                "Adaptive invoice task that targets your demonstrated weak areas. "
+                "The environment tracks your accuracy on vendor extraction, date parsing, math verification, "
+                "and fraud detection across steps — and generates the next invoice to stress-test your worst field.\n"
+                "Each step: extract the invoice and return {vendor, date, currency, total, line_items}. "
+                "Your agent_profile (shown in each observation) reveals which fields you've been missing. "
+                "The task is complete when you achieve ≥0.90 on all 4 field categories across 10 attempts, "
+                "or when 10 steps are exhausted. "
+                "Reward is weighted toward your historically weakest field — fixing a blind spot earns more."
+            ),
+            "max_attempts": 10,
+        },
     }
 
     def __init__(self):
@@ -1184,6 +1359,18 @@ class InvoiceEnvironment(_OpenEnvBase):
         self._supply_chain_records: List[Dict] = []
         self._expected_sc_anomalies: List[Dict] = []
         self._ocr_intensity: float = 0.35
+        # Long-horizon state
+        self._lh_invoices: List[Dict] = []
+        self._lh_gt: List[Dict] = []
+        self._lh_po_texts: List[str] = []
+        self._lh_expert_gt: List[Dict] = []
+        self._lh_reference: str = ""
+        # Personalized state
+        self._personalized_invoice: Dict = {}
+        self._personalized_gt: Dict = {}
+        self._personalized_field_scores: Dict[str, List[float]] = {
+            "vendor": [], "date": [], "math": [], "completeness": []
+        }
 
     def reset(self, task_id: str = "easy") -> Tuple[InvoiceObservation, float, bool, Dict]:
         """Reset the environment for a new episode."""
@@ -1265,6 +1452,41 @@ class InvoiceEnvironment(_OpenEnvBase):
             self._expected_sc_anomalies = expected_anomalies
             self._raw_text = _render_delivery_records(records)
 
+        elif task_id == "long_horizon":
+            # Pre-generate all 3 invoice batches so phases are consistent
+            self._lh_invoices = [_generate_invoice() for _ in range(3)]
+            self._lh_gt = copy.deepcopy(self._lh_invoices)
+            po_texts = []
+            self._lh_expert_gt = []
+            disc_list = []
+            for inv in self._lh_invoices:
+                po, discs = _generate_purchase_order(inv)
+                po_texts.append(_render_po(po))
+                disc_list.append(discs)
+            self._expected_discrepancies = disc_list
+            self._lh_po_texts = po_texts
+            # Expert audit data for phase 3
+            exp_invs, exp_gt, _, ref_text = _generate_expert_batch()
+            self._lh_expert_gt = exp_gt
+            self._lh_reference = ref_text
+            # Phase 1: show raw invoices only
+            self._state.phase = 1
+            self._state.phase_context = ""
+            self._raw_text = _render_messy_batch(
+                [_make_messy_invoice(copy.deepcopy(inv)) for inv in self._lh_invoices]
+            )
+            self._reference_data = ""
+
+        elif task_id == "personalized":
+            # Reset per-field history and generate first invoice
+            self._personalized_field_scores = {"vendor": [], "date": [], "math": [], "completeness": []}
+            self._state.agent_profile = {"vendor": 0.5, "date": 0.5, "math": 0.5, "completeness": 0.5}
+            inv = _generate_invoice()
+            self._personalized_gt = inv
+            self._personalized_invoice = _make_messy_invoice(copy.deepcopy(inv))
+            self._raw_text = _render_messy_batch([self._personalized_invoice])
+            self._reference_data = ""
+
         task_info = self.TASKS[task_id]
         obs = InvoiceObservation(
             raw_text=self._raw_text,
@@ -1278,6 +1500,9 @@ class InvoiceEnvironment(_OpenEnvBase):
             reference_data=self._reference_data,
             reward_breakdown=None,
             conversation_history=[],
+            phase=self._state.phase if task_id == "long_horizon" else None,
+            phase_context=self._state.phase_context if task_id == "long_horizon" else None,
+            agent_profile=self._state.agent_profile if task_id == "personalized" else None,
         )
         return obs, _clamp_score(0.0), False, {"episode_id": self._state.episode_id}
 
@@ -1349,6 +1574,45 @@ class InvoiceEnvironment(_OpenEnvBase):
                 action.extracted_data, self._expected_sc_anomalies
             )
 
+        elif task_id == "long_horizon":
+            score, feedback = _grade_long_horizon(
+                action.extracted_data, self._state, self._lh_gt,
+                self._expected_discrepancies, self._lh_expert_gt,
+                self._lh_po_texts,
+            )
+            # Phase transition: every 5 steps advance phase and carry context forward
+            if attempt % 5 == 0 and attempt < 20:
+                next_phase = self._state.phase + 1
+                self._state.phase_context += f"\n[Phase {self._state.phase} summary] score={score:.2f} {feedback[:120]}"
+                self._state.phase = next_phase
+                # Reveal more reference data as phases unlock
+                if next_phase == 2:
+                    self._reference_data = "\n\n".join(self._lh_po_texts)
+                elif next_phase == 3:
+                    self._reference_data = self._lh_reference
+                elif next_phase == 4:
+                    self._reference_data = "RISK ANALYSIS PHASE — use all prior phase findings."
+            self._state.phase_scores.append(score)
+
+        elif task_id == "personalized":
+            score, feedback, field_scores = _grade_personalized(
+                action.extracted_data, self._personalized_gt
+            )
+            # Update per-field running accuracy
+            for field, fs in field_scores.items():
+                self._personalized_field_scores[field].append(fs)
+            # Recompute agent profile as moving average
+            self._state.agent_profile = {
+                f: round(sum(v) / len(v), 3) if v else 0.5
+                for f, v in self._personalized_field_scores.items()
+            }
+            # Generate next invoice targeting weakest field
+            weakest = min(self._state.agent_profile, key=lambda k: self._state.agent_profile[k])
+            inv = _generate_invoice_targeting(weakest)
+            self._personalized_gt = inv
+            self._personalized_invoice = _make_messy_invoice(copy.deepcopy(inv))
+            self._raw_text = _render_messy_batch([self._personalized_invoice])
+
         # Record for dynamic difficulty
         _record_score(task_id, score)
 
@@ -1393,6 +1657,17 @@ class InvoiceEnvironment(_OpenEnvBase):
                     "item_delivered != item_ordered (unauthorized_substitution); "
                     "PO ID starting with PO-PHANTOM- (phantom_delivery)."
                 ),
+                "long_horizon": (
+                    f"Phase {self._state.phase}/4. "
+                    "Phase 1: extract invoices. Phase 2: reconcile vs POs (now visible in reference_data). "
+                    "Phase 3: audit for fraud (registry + catalog now visible). "
+                    "Phase 4: produce risk report."
+                ),
+                "personalized": (
+                    f"Weakest field: {min(self._state.agent_profile, key=lambda k: self._state.agent_profile[k])} "
+                    f"(accuracy {min(self._state.agent_profile.values()):.0%}). "
+                    "Next invoice targets that field. Fix your blind spot to maximise reward."
+                ),
             }
             hint = hints.get(task_id, "")
 
@@ -1408,6 +1683,9 @@ class InvoiceEnvironment(_OpenEnvBase):
             reference_data=self._reference_data,
             reward_breakdown=reward_breakdown,
             conversation_history=list(self._state.conversation_history),
+            phase=self._state.phase if task_id == "long_horizon" else None,
+            phase_context=self._state.phase_context if task_id == "long_horizon" else None,
+            agent_profile=self._state.agent_profile if task_id == "personalized" else None,
         )
 
         return obs, _clamp_score(reward), done, {

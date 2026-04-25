@@ -446,152 +446,34 @@ def _get_regulator_report() -> str:
     return "\n".join(lines)
 
 
+_GITHUB_RAW = "https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets"
+
 def _make_training_curves() -> str:
-    """
-    Render training reward curves. Returns base64-encoded HTML <img> tag.
-    Data from actual Colab training logs.
-    """
-    import io, base64
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.gridspec as gridspec
-    import numpy as np
-
-    # ── Exact data from Colab training logs ──────────────────────────────────
-
-    # Extractor: peaked 0.914 at step 15, then crashed (_MAX_SESSIONS=50 bug)
-    ext_steps = [5,     10,    15,    20]
-    ext_live  = [0.230, 0.750, 0.914, 0.230]
-    ext_total = [2.39,  3.06,  3.39,  2.94]
-
-    # Auditor run 2 — exact numbers from training log table
-    aud_steps      = [5,        10,       15,       20,       25,       30]
-    aud_live_bad   = [0.010,    0.010,    0.010,    0.010,    0.010,    0.010]
-    aud_live_good  = [0.282750, 0.518750, 0.253835, 0.373340, 0.332500, 0.403755]
-    aud_total_good = [0.482750, 0.718750, 0.453835, 0.573340, 0.532500, 0.603755]
-    aud_std        = [0.194365, 0.239377, 0.123136, 0.212295, 0.231516, 0.147087]
-
-    # Generator: evasion dead (bug), format plausibility did learn
-    gen_steps   = [5,     10,    15,    20,    25,    30]
-    gen_evasion = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]
-    gen_plaus   = [0.190, 0.230, 0.230, 0.245, 0.230, 0.220]
-
-    # ── Style ─────────────────────────────────────────────────────────────────
-    DARK   = "#0f172a"
-    PANEL  = "#1e293b"
-    GRID   = "#334155"
-    TEXT   = "#e2e8f0"
-    BLUE   = "#60a5fa"
-    ORANGE = "#fb923c"
-    GREEN  = "#4ade80"
-    RED    = "#f87171"
-    YELLOW = "#facc15"
-
-    def _style(ax, title):
-        ax.set_facecolor(PANEL)
-        ax.tick_params(colors=TEXT, labelsize=9)
-        ax.xaxis.label.set_color(TEXT)
-        ax.yaxis.label.set_color(TEXT)
-        ax.title.set_color(TEXT)
-        ax.set_title(title, fontsize=11, fontweight="bold", pad=10)
-        ax.grid(True, color=GRID, linewidth=0.6, alpha=0.7)
-        for sp in ax.spines.values():
-            sp.set_edgecolor(GRID)
-
-    fig = plt.figure(figsize=(14, 10), facecolor=DARK)
-    gs  = gridspec.GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.38)
-
-    # Panel 1: Extractor
-    ax1  = fig.add_subplot(gs[0, 0])
-    ax1r = ax1.twinx()
-    ax1.plot(ext_steps, ext_live, color=ORANGE, lw=2.5, marker="o", ms=7,
-             label="Live /grader score", zorder=3)
-    ax1r.plot(ext_steps, ext_total, color=BLUE, lw=2, marker="s", ms=5,
-              linestyle="--", label="Total reward (4 signals)", zorder=2)
-    ax1.axvline(x=17, color=RED, lw=1.2, linestyle="--", alpha=0.8)
-    ax1.text(17.3, 0.10, "_MAX_SESSIONS\nbug → crash", color=RED, fontsize=7)
-    ax1.annotate("Peak 0.914", xy=(15, 0.914), xytext=(9, 0.75),
-                 color=GREEN, fontsize=8, fontweight="bold",
-                 arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.2))
-    ax1.set_xlabel("Training Step")
-    ax1.set_ylabel("Live Grader Score", color=ORANGE)
-    ax1r.set_ylabel("Total Reward (4 signals)", color=BLUE)
-    ax1.set_ylim(0, 1.15); ax1r.set_ylim(0, 4.5)
-    ax1.tick_params(axis="y", colors=ORANGE)
-    ax1r.tick_params(axis="y", colors=BLUE)
-    ax1r.set_facecolor(PANEL)
-    for sp in ax1r.spines.values(): sp.set_edgecolor(GRID)
-    h1, l1 = ax1.get_legend_handles_labels()
-    h2, l2 = ax1r.get_legend_handles_labels()
-    ax1.legend(h1+h2, l1+l2, fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
-    _style(ax1, "Extractor — Peak 0.914 live score")
-
-    # Panel 2: Auditor
-    ax2 = fig.add_subplot(gs[0, 1])
-    lo  = [r - s for r, s in zip(aud_live_good, aud_std)]
-    hi  = [r + s for r, s in zip(aud_live_good, aud_std)]
-    ax2.fill_between(aud_steps, lo, hi, color=BLUE, alpha=0.15, label="±1 std (run 2)")
-    ax2.plot(aud_steps, aud_live_bad,   color=RED,   lw=2,   marker="o", ms=4,
-             linestyle="--", label="Run 1 — dead (episode_id bug)")
-    ax2.plot(aud_steps, aud_live_good,  color=BLUE,  lw=2.5, marker="s", ms=5,
-             label="Run 2 — live env reward")
-    ax2.plot(aud_steps, aud_total_good, color=GREEN, lw=1.8, marker="^", ms=4,
-             linestyle=":", label="Run 2 — total reward")
-    ax2.axhline(y=0.20, color=GRID, lw=1, linestyle=":", alpha=0.8)
-    ax2.text(5.2, 0.21, "format baseline (0.20)", color=GRID, fontsize=7)
-    ax2.set_xlabel("Training Step"); ax2.set_ylabel("Reward")
-    ax2.set_ylim(0, 0.95)
-    ax2.legend(fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
-    _style(ax2, "Auditor — 0.01 → 0.52 after bug fix")
-
-    # Panel 3: Generator
-    ax3 = fig.add_subplot(gs[1, 0])
-    ax3.plot(gen_steps, gen_evasion, color=RED,    lw=2,   marker="o", ms=4,
-             label="Live evasion reward (dead — bug)")
-    ax3.plot(gen_steps, gen_plaus,   color=YELLOW, lw=2.5, marker="s", ms=5,
-             linestyle="--", label="Fraud plausibility / format")
-    ax3.axhline(y=0.85, color=GREEN, lw=1, linestyle=":", alpha=0.8)
-    ax3.text(5.2, 0.87, "max evasion reward (0.85)", color=GREEN, fontsize=7)
-    ax3.axhline(y=0.10, color=GRID, lw=1, linestyle=":", alpha=0.7)
-    ax3.text(5.2, 0.11, "caught baseline (0.10)", color=GRID, fontsize=7)
-    ax3.set_xlabel("Training Step"); ax3.set_ylabel("Reward")
-    ax3.set_ylim(0, 1.0)
-    ax3.legend(fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
-    _style(ax3, "Generator — Format learned, evasion needs rerun")
-
-    # Panel 4: Baseline vs Best
-    ax4 = fig.add_subplot(gs[1, 1])
-    metrics  = [("Extractor\nlive score", 0.10, 0.914),
-                ("Auditor\nlive reward",  0.01, 0.51875),
-                ("Auditor\ntotal reward", 0.20, 0.71875)]
-    lbl  = [m[0] for m in metrics]
-    base = [m[1] for m in metrics]
-    best = [m[2] for m in metrics]
-    x = np.arange(len(metrics)); w = 0.32
-    ax4.bar(x - w/2, base, w, color=RED,   alpha=0.85, label="Baseline (untrained)")
-    bars = ax4.bar(x + w/2, best, w, color=GREEN, alpha=0.85, label="Best achieved")
-    for bar, val in zip(bars, best):
-        ax4.text(bar.get_x() + bar.get_width()/2, val + 0.02,
-                 f"{val:.3f}", ha="center", va="bottom",
-                 color=TEXT, fontsize=8, fontweight="bold")
-    ax4.set_xticks(x); ax4.set_xticklabels(lbl, fontsize=8)
-    ax4.set_ylabel("Reward / Score"); ax4.set_ylim(0, 1.1)
-    ax4.legend(fontsize=8, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
-    _style(ax4, "Key Results — Baseline vs Best")
-
-    fig.suptitle(
-        "GRPO Training Results  ·  Qwen2.5-1.5B-Instruct + LoRA r=16  ·  TRL + Unsloth",
-        color=TEXT, fontsize=12, fontweight="bold", y=0.99,
+    """Return HTML showing the 3 real Colab training curve images from GitHub."""
+    img_style = "width:100%;border-radius:10px;margin-bottom:16px;"
+    label_style = (
+        "color:#94a3b8;font-size:0.82rem;font-family:monospace;"
+        "text-align:center;display:block;margin-bottom:20px;"
     )
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=DARK)
-    buf.seek(0)
-    plt.close(fig)
-    b64 = base64.b64encode(buf.read()).decode()
-    return f'<img src="data:image/png;base64,{b64}" style="width:100%;border-radius:10px;margin-top:12px;" />'
+    return f"""
+<div style="padding:8px;">
+  <p style="color:#94a3b8;font-size:0.85rem;margin-bottom:16px;">
+    Real training runs on Google Colab A100 — Qwen2.5-1.5B-Instruct + LoRA r=16 + TRL GRPOTrainer + Unsloth
+  </p>
+  <img src="{_GITHUB_RAW}/reward_curve.png" style="{img_style}" />
+  <span style="{label_style}">
+    🔍 Extractor — Total reward (4 signals) ↑ · Live /grader score peaked 0.914 at step 15 · Crashed at step 20 due to _MAX_SESSIONS=50 bug (fixed to 200)
+  </span>
+  <img src="{_GITHUB_RAW}/auditor_reward_curve_run2.png" style="{img_style}" />
+  <span style="{label_style}">
+    🕵️ Auditor — Run 2 (bug fixed) · Total reward ↑ 0.48→0.72 · Live env reward ↑ 0.28→0.52 · Run 1 had dead signal (episode_id list bug)
+  </span>
+  <img src="{_GITHUB_RAW}/generator_reward_curve.png" style="{img_style}" />
+  <span style="{label_style}">
+    ⚡ Generator — Fraud plausibility (format) learned ~0.19→0.25 · Live evasion reward stuck at 0.01 (same episode_id bug) — needs rerun with fix
+  </span>
+</div>
+"""
 
 
 def _seed_demo_data() -> str:

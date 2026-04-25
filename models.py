@@ -46,7 +46,7 @@ class InvoiceObservation(BaseModel):
     """What the agent sees each turn."""
 
     raw_text: str = Field(..., description="Raw invoice text (OCR-style or CSV-style)")
-    task_id: str = Field(..., description="easy | medium | hard | expert | adversarial | negotiate | supply_chain")
+    task_id: str = Field(..., description="easy | medium | hard | expert | adversarial | negotiate | supply_chain | long_horizon | personalized")
     difficulty: str = Field(..., description="Same as task_id")
     task_description: str = Field(..., description="What the agent should do")
     attempt_number: int = Field(default=0, description="Current attempt (0 = just reset)")
@@ -69,6 +69,18 @@ class InvoiceObservation(BaseModel):
         default_factory=list,
         description="For negotiate task: list of {'role': 'agent'|'env', 'content': str} turns.",
     )
+    phase: Optional[int] = Field(
+        default=None,
+        description="For long_horizon task: current phase (1=extract, 2=reconcile, 3=audit, 4=forecast).",
+    )
+    phase_context: Optional[str] = Field(
+        default=None,
+        description="For long_horizon task: accumulated findings from prior phases passed to next phase.",
+    )
+    agent_profile: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="For personalized task: agent's historical performance profile used to adapt difficulty.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +99,12 @@ class InvoiceState(BaseModel):
     rewards: List[float] = Field(default_factory=list)
     conversation_history: List[Dict[str, Any]] = Field(default_factory=list)
     clarification_count: int = Field(default=0)
+    # Long-horizon: tracks which phase and accumulated context
+    phase: int = Field(default=1)
+    phase_scores: List[float] = Field(default_factory=list)
+    phase_context: str = Field(default="")
+    # Personalized: tracks agent weak areas across steps
+    agent_profile: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
