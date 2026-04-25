@@ -159,7 +159,7 @@ def _run_pipeline_episode() -> str:
         # Rule-based fallback
         vendor_match = _re.search(r"Vendor:\s*(.+)", raw_text)
         date_match   = _re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", raw_text)
-        total_match  = _re.search(r"TOTAL\s+[\$£€]?([\d,.]+)", raw_text)
+        total_match  = _re.search(r"(?:Total|TOTAL)[:\s]+[\$£€]?([\d,]+\.?\d*)", raw_text, _re.IGNORECASE)
         vendor = vendor_match.group(1).strip() if vendor_match else "Unknown Vendor"
         date   = date_match.group(1).strip() if date_match else "2024-01-01"
         total  = float(total_match.group(1).replace(",", "")) if total_match else 0.0
@@ -192,7 +192,8 @@ def _run_pipeline_episode() -> str:
     audit_results, used_model = run_auditor(raw_text, ref_data, n_inv)
     agent_label = "🤖 LoRA (ps2181/auditor-lora-qwen2.5-1.5b)" if used_model else "📐 rule-based fallback"
 
-    inv_ids = _re.findall(r"ID:\s*(INV-\d+)", raw_text)
+    # findall preserves order; dict.fromkeys deduplicates while keeping order
+    inv_ids = list(dict.fromkeys(_re.findall(r"ID:\s*(INV-\d+)", raw_text)))
     if not inv_ids:
         inv_ids = [f"INV-{i:05d}" for i in range(n_inv)]
 
