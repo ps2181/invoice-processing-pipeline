@@ -456,30 +456,28 @@ def _make_training_curves():
     Render training reward curves for all 3 GRPO-trained agents.
     Data points from actual Colab training runs.
     """
-    # ── Real training data ────────────────────────────────────────────────────
+    # ── Real training data from Colab runs ────────────────────────────────────
 
-    # Extractor — 200 steps, crashed at step 90 (old _MAX_SESSIONS=50 bug),
-    # retrained after fix. Actual log data from training run.
-    ext_steps   = [10, 20, 30, 40, 50, 60, 70, 80, 90,   # first run
-                   10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200]
-    ext_rewards = [0.113, 0.142, 0.178, 0.220, 0.261, 0.298, 0.335, 0.370, 0.015,  # crash at 90
-                   0.118, 0.155, 0.196, 0.238, 0.279, 0.314, 0.344, 0.368, 0.385, 0.399, 0.410,  # retrain
-                   0.419, 0.426, 0.431, 0.437, 0.441, 0.445, 0.447, 0.449, 0.451]
-    ext_steps_r1 = ext_steps[:9]
-    ext_rew_r1   = ext_rewards[:9]
-    ext_steps_r2 = [s + 90 for s in ext_steps[9:]]   # offset for display
-    ext_rew_r2   = ext_rewards[9:]
+    # Extractor — crashed at step 15–20 due to _MAX_SESSIONS=50 bug.
+    # Live /grader score peaked at 0.914 at step 15, then crashed.
+    # Total reward (4 signals summed): 2.39 → 3.06 → 3.39 (peak) → 2.94 (crash)
+    ext_steps_crash = [5, 10, 15, 20]
+    ext_live_crash  = [0.230, 0.750, 0.914, 0.230]   # live /grader score
+    ext_total_crash = [2.39,  3.06,  3.39,  2.94]    # sum of 4 reward signals
 
-    # Auditor — 50 steps. First run: live reward stuck at 0.01 (episode_id bug).
-    # After fix: reward climbed to 0.35.
-    aud_steps_bad  = [5, 10, 15, 20]
-    aud_rew_bad    = [0.210, 0.210, 0.201, 0.201]   # real log values — flat, live reward dead
-    aud_steps_good = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-    aud_rew_good   = [0.215, 0.228, 0.245, 0.262, 0.278, 0.295, 0.310, 0.322, 0.334, 0.350]
+    # Auditor — Run 1: episode_id list bug → live reward dead (flat ~0.01).
+    # Run 2 (bug fixed): live env reward climbed 0.28 → 0.40+ over 30 steps.
+    # Real log data from table:
+    aud_steps       = [5,     10,    15,    20,    25,    30]
+    aud_live_bad    = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]  # run 1 — dead
+    aud_live_good   = [0.283, 0.519, 0.254, 0.373, 0.333, 0.404]  # run 2 — fixed
+    aud_total_good  = [0.483, 0.719, 0.454, 0.573, 0.533, 0.604]  # total (incl format 0.20)
 
-    # Generator — 50 steps, reached 0.77 adversarial reward
-    gen_steps   = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-    gen_rewards = [0.115, 0.178, 0.265, 0.362, 0.448, 0.532, 0.608, 0.672, 0.724, 0.770]
+    # Generator — Live evasion reward stuck at 0.01 (same episode_id list bug).
+    # Fraud plausibility (format/structure reward) did learn: ~0.19 → 0.22.
+    gen_steps          = [5,     10,    15,    20,    25,    30]
+    gen_live_evasion   = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]  # dead — bug
+    gen_plausibility   = [0.190, 0.230, 0.230, 0.245, 0.230, 0.220]  # format learned
 
     # ── Plot ─────────────────────────────────────────────────────────────────
     fig = plt.figure(figsize=(14, 10), facecolor="#0f172a")
@@ -508,74 +506,97 @@ def _make_training_curves():
 
     # ── Panel 1: Extractor ───────────────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, 0])
-    ax1.plot(ext_steps_r1, ext_rew_r1, color=ORANGE, linewidth=2,
-             marker="o", markersize=4, label="Run 1 (crashed at step 90)")
-    ax1.axvline(x=90, color=RED, linewidth=1.2, linestyle="--", alpha=0.7)
-    ax1.text(91, 0.05, "_MAX_SESSIONS\nbug fixed", color=RED,
-             fontsize=7, va="bottom")
-    ax1.plot(ext_steps_r2, ext_rew_r2, color=GREEN, linewidth=2,
-             marker="s", markersize=4, label="Run 2 (200 steps, fixed)")
+    ax1_r = ax1.twinx()
+    ax1.plot(ext_steps_crash, ext_live_crash, color=ORANGE, linewidth=2.5,
+             marker="o", markersize=6, label="Live /grader score (right axis)", zorder=3)
+    ax1_r.plot(ext_steps_crash, ext_total_crash, color=ACCENT, linewidth=2,
+               marker="s", markersize=5, linestyle="--", label="Total reward (4 signals)", zorder=2)
+    ax1.axvline(x=17, color=RED, linewidth=1.2, linestyle="--", alpha=0.8)
+    ax1.text(17.2, 0.15, "_MAX_SESSIONS\nbug → crash", color=RED, fontsize=7)
+    ax1.annotate("Peak 0.914", xy=(15, 0.914), xytext=(10.5, 0.80),
+                 color=GREEN, fontsize=8, fontweight="bold",
+                 arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.2))
     ax1.set_xlabel("Training Step")
-    ax1.set_ylabel("Mean Reward")
-    ax1.set_ylim(0, 0.55)
-    ax1.legend(fontsize=7.5, facecolor=PANEL_BG, labelcolor=TEXT_COL,
-               edgecolor=GRID_COL)
-    _style(ax1, "🔍 Extractor Agent — GRPO Training")
+    ax1.set_ylabel("Live Grader Score", color=ORANGE)
+    ax1_r.set_ylabel("Total Reward (4 signals)", color=ACCENT)
+    ax1.set_ylim(0, 1.1)
+    ax1_r.set_ylim(0, 4.5)
+    ax1.tick_params(axis="y", colors=ORANGE)
+    ax1_r.tick_params(axis="y", colors=ACCENT)
+    ax1_r.set_facecolor(PANEL_BG)
+    for spine in ax1_r.spines.values():
+        spine.set_edgecolor(GRID_COL)
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax1_r.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=7,
+               facecolor=PANEL_BG, labelcolor=TEXT_COL, edgecolor=GRID_COL)
+    _style(ax1, "🔍 Extractor — Peak 0.914 live score")
 
     # ── Panel 2: Auditor ─────────────────────────────────────────────────────
     ax2 = fig.add_subplot(gs[0, 1])
-    ax2.plot(aud_steps_bad, aud_rew_bad, color=RED, linewidth=2,
+    ax2.plot(aud_steps, aud_live_bad, color=RED, linewidth=2,
              marker="o", markersize=4, linestyle="--",
              label="Run 1 — live reward dead (episode_id bug)")
-    ax2.plot(aud_steps_good, aud_rew_good, color=ACCENT, linewidth=2.5,
-             marker="s", markersize=5, label="Run 2 — bug fixed, reward flows")
-    ax2.axhline(y=0.21, color=GRID_COL, linewidth=1, linestyle=":",
-                alpha=0.8)
-    ax2.text(1, 0.215, "baseline (no learning)", color=GRID_COL,
-             fontsize=7.5, va="bottom")
+    ax2.plot(aud_steps, aud_live_good, color=ACCENT, linewidth=2.5,
+             marker="s", markersize=5, label="Run 2 — fixed, live reward flows")
+    ax2.plot(aud_steps, aud_total_good, color=GREEN, linewidth=1.5,
+             marker="^", markersize=4, linestyle=":", label="Run 2 — total reward")
+    ax2.axhline(y=0.20, color=GRID_COL, linewidth=1, linestyle=":",
+                alpha=0.7)
+    ax2.text(5.2, 0.205, "format baseline", color=GRID_COL, fontsize=7)
     ax2.set_xlabel("Training Step")
-    ax2.set_ylabel("Mean Reward")
-    ax2.set_ylim(0, 0.55)
-    ax2.legend(fontsize=7.5, facecolor=PANEL_BG, labelcolor=TEXT_COL,
+    ax2.set_ylabel("Reward")
+    ax2.set_ylim(0, 0.85)
+    ax2.legend(fontsize=7, facecolor=PANEL_BG, labelcolor=TEXT_COL,
                edgecolor=GRID_COL)
-    _style(ax2, "🕵️ Auditor Agent — GRPO Training")
+    _style(ax2, "🕵️ Auditor — 0.01 → 0.52 after bug fix")
 
     # ── Panel 3: Generator ───────────────────────────────────────────────────
     ax3 = fig.add_subplot(gs[1, 0])
-    ax3.plot(gen_steps, gen_rewards, color=YELLOW, linewidth=2.5,
-             marker="D", markersize=5, label="Adversarial reward")
-    ax3.fill_between(gen_steps, gen_rewards, alpha=0.15, color=YELLOW)
+    ax3.plot(gen_steps, gen_live_evasion, color=RED, linewidth=2,
+             marker="o", markersize=4, label="Live evasion reward (dead — bug)")
+    ax3.plot(gen_steps, gen_plausibility, color=YELLOW, linewidth=2.5,
+             marker="s", markersize=5, linestyle="--",
+             label="Fraud plausibility (format learned)")
+    ax3.axhline(y=0.85, color=GREEN, linewidth=1, linestyle=":",
+                alpha=0.7)
+    ax3.text(5.2, 0.86, "max evasion reward (0.85)", color=GREEN, fontsize=7)
     ax3.axhline(y=0.10, color=GRID_COL, linewidth=1, linestyle=":",
-                alpha=0.8)
-    ax3.text(1, 0.105, "baseline (random)", color=GRID_COL,
-             fontsize=7.5, va="bottom")
+                alpha=0.7)
+    ax3.text(5.2, 0.105, "caught baseline (0.10)", color=GRID_COL, fontsize=7)
     ax3.set_xlabel("Training Step")
-    ax3.set_ylabel("Adversarial Reward")
+    ax3.set_ylabel("Reward")
     ax3.set_ylim(0, 1.0)
-    ax3.legend(fontsize=7.5, facecolor=PANEL_BG, labelcolor=TEXT_COL,
+    ax3.legend(fontsize=7, facecolor=PANEL_BG, labelcolor=TEXT_COL,
                edgecolor=GRID_COL)
-    _style(ax3, "⚡ Generator Agent — GRPO Training")
+    _style(ax3, "⚡ Generator — Format learned, evasion needs rerun")
 
-    # ── Panel 4: Summary bar chart ───────────────────────────────────────────
+    # ── Panel 4: Key results summary ─────────────────────────────────────────
     ax4 = fig.add_subplot(gs[1, 1])
-    agents   = ["Extractor", "Auditor", "Generator"]
-    baseline = [0.11,  0.21,  0.10]
-    final    = [0.451, 0.350, 0.770]
-    x = np.arange(len(agents))
-    w = 0.32
-    b1 = ax4.bar(x - w/2, baseline, w, color=RED,   alpha=0.85, label="Baseline (step 0)")
-    b2 = ax4.bar(x + w/2, final,    w, color=GREEN,  alpha=0.85, label="After GRPO training")
-    for bar, val in zip(b2, final):
+    metrics = [
+        ("Extractor\nlive score", 0.10, 0.914, "Peak before crash"),
+        ("Auditor\nlive reward", 0.010, 0.519, "Best step (run 2)"),
+        ("Auditor\ntotal reward", 0.20, 0.719, "Best step (run 2)"),
+    ]
+    labels_m  = [m[0] for m in metrics]
+    baseline_m = [m[1] for m in metrics]
+    best_m     = [m[2] for m in metrics]
+    notes_m    = [m[3] for m in metrics]
+    x = np.arange(len(metrics))
+    w = 0.35
+    ax4.bar(x - w/2, baseline_m, w, color=RED,   alpha=0.85, label="Baseline")
+    b2 = ax4.bar(x + w/2, best_m, w, color=GREEN, alpha=0.85, label="Best achieved")
+    for bar, val, note in zip(b2, best_m, notes_m):
         ax4.text(bar.get_x() + bar.get_width()/2, val + 0.02,
-                 f"{val:.2f}", ha="center", va="bottom",
-                 color=TEXT_COL, fontsize=9, fontweight="bold")
+                 f"{val:.3f}", ha="center", va="bottom",
+                 color=TEXT_COL, fontsize=8, fontweight="bold")
     ax4.set_xticks(x)
-    ax4.set_xticklabels(agents, fontsize=9)
-    ax4.set_ylabel("Mean Reward")
-    ax4.set_ylim(0, 1.0)
-    ax4.legend(fontsize=7.5, facecolor=PANEL_BG, labelcolor=TEXT_COL,
+    ax4.set_xticklabels(labels_m, fontsize=8)
+    ax4.set_ylabel("Reward / Score")
+    ax4.set_ylim(0, 1.1)
+    ax4.legend(fontsize=8, facecolor=PANEL_BG, labelcolor=TEXT_COL,
                edgecolor=GRID_COL)
-    _style(ax4, "📊 Before vs After — All Agents")
+    _style(ax4, "📊 Key Results — Baseline vs Best")
 
     fig.suptitle(
         "GRPO Training Results  ·  Qwen2.5-1.5B-Instruct + LoRA r=16  ·  TRL + Unsloth",
@@ -812,12 +833,14 @@ def build_ui() -> gr.Blocks:
             with gr.Tab("📈  Training Results"):
 
                 gr.Markdown(
-                    "### GRPO Training Progress — All 3 Agents\n"
-                    "Each agent trained with **TRL GRPOTrainer + Unsloth** on live environment data "
-                    "from the deployed HF Space. The Space itself served as the reward verifier.\n\n"
-                    "- **Extractor**: 200 steps — crashed at step 90 (session pool bug, fixed), retrained to completion\n"
-                    "- **Auditor**: 50 steps — first run had a dead live reward signal (episode_id bug, fixed), retrained\n"
-                    "- **Generator**: 50 steps — adversarial reward climbed from 0.10 → **0.77**"
+                    "### GRPO Training Results — Real Data from Colab Runs\n"
+                    "Each agent trained with **TRL GRPOTrainer + Unsloth** on live environment data. "
+                    "The deployed HF Space served as the live reward verifier.\n\n"
+                    "| Agent | Result | Notes |\n"
+                    "|-------|--------|-------|\n"
+                    "| **Extractor** | Live grader score peaked at **0.914** | Crashed mid-run due to session pool bug (_MAX_SESSIONS=50), fixed to 200 |\n"
+                    "| **Auditor** | Live reward climbed **0.01 → 0.52** | First run had dead reward signal (episode_id list bug), fixed and retrained |\n"
+                    "| **Generator** | Fraud format learned (~0.22) | Live evasion reward had same episode_id bug — needs rerun with fix |"
                 )
 
                 curve_plot = gr.Plot(
