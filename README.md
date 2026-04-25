@@ -1,11 +1,11 @@
 <p align="center">
-<img width="1440" height="832" alt="image" src="https://github.com/user-attachments/assets/2334ba54-17a8-4536-94f7-5c9510bbd13d" />
+  <h1>Invoice Processing Pipeline</h1>
 </p>
 
 <div class="card">
   <div class="card-header">
     <div class="card-header-dot"></div>
-    <span class="card-header-title">HuggingFace Space — metadata</span>
+    <span class="card-header-title"></span>
   </div>
   <!-- yaml rows + tag rows + footer badges -->
 </div>
