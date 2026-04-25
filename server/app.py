@@ -43,7 +43,7 @@ except Exception as _e:
 # Thread-safe, capped at MAX_SESSIONS to bound memory on vcpu=2 / 8gb
 # ---------------------------------------------------------------------------
 
-_MAX_SESSIONS = 50
+_MAX_SESSIONS = 200
 _sessions: OrderedDict[str, InvoiceEnvironment] = OrderedDict()
 _lock = threading.Lock()
 
@@ -284,6 +284,127 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json({"type": "error", "data": {"message": str(e)}})
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Multi-agent endpoints
+# ---------------------------------------------------------------------------
+
+from server.multi_agent_environment import (
+    create_episode,
+    get_episode,
+    handle_extract,
+    handle_audit,
+    handle_approve,
+    tracker as _regulator_tracker,
+    compute_regulator_reward,
+)
+
+
+class MultiResetResponse(BaseModel):
+    episode_id: str
+    raw_text: str
+    reference_data: str
+    fraud_weights_used: Dict[str, Any]
+    n_invoices: int
+
+
+class MultiExtractRequest(BaseModel):
+    episode_id: str
+    extracted_data: Dict[str, Any]
+
+
+class MultiAuditRequest(BaseModel):
+    episode_id: str
+    audit_results: list
+
+
+class RegulatorPredictRequest(BaseModel):
+    predicted_blind_spots: list
+
+
+@app.post("/multi/reset")
+def multi_reset():
+    """Start a new multi-agent episode. Generator is biased by Regulator blind spots."""
+    ep = create_episode()
+    return MultiResetResponse(
+        episode_id=ep.episode_id,
+        raw_text=ep.raw_text,
+        reference_data=ep.reference_data,
+        fraud_weights_used=ep.fraud_weights_used,
+        n_invoices=len(ep.invoices),
+    )
+
+
+@app.post("/multi/extract")
+def multi_extract(req: MultiExtractRequest):
+    """Score Extractor output with 4 independent reward signals."""
+    result = handle_extract(req.episode_id, req.extracted_data)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/multi/audit")
+def multi_audit(req: MultiAuditRequest):
+    """Score Auditor output. Records to AuditorPerformanceTracker."""
+    result = handle_audit(req.episode_id, req.audit_results)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/multi/approve")
+def multi_approve(episode_id: str):
+    """Run rule-based Approver. Computes Generator adversarial reward."""
+    result = handle_approve(episode_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/multi/state/{episode_id}")
+def multi_state(episode_id: str):
+    """Get current state of a multi-agent episode."""
+    ep = get_episode(episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {
+        "episode_id": ep.episode_id,
+        "n_invoices": len(ep.invoices),
+        "fraud_weights_used": ep.fraud_weights_used,
+        "extractor_reward": ep.extractor_reward,
+        "extractor_breakdown": ep.extractor_breakdown,
+        "mean_auditor_reward": ep.mean_auditor_reward,
+        "mean_generator_reward": ep.mean_generator_reward,
+        "done": ep.done,
+    }
+
+
+@app.get("/regulator/report")
+def regulator_report():
+    """Get the Regulator's current cross-episode Auditor performance report."""
+    return _regulator_tracker.report()
+
+
+@app.post("/regulator/predict")
+def regulator_predict(req: RegulatorPredictRequest):
+    """Score a Regulator agent's blind spot predictions against actual tracker state."""
+    actual = _regulator_tracker.blind_spots()
+    reward, feedback = compute_regulator_reward(req.predicted_blind_spots, actual)
+    return {
+        "reward": reward,
+        "feedback": feedback,
+        "actual_blind_spots": actual,
+        "predicted_blind_spots": req.predicted_blind_spots,
+    }
+
+
+@app.post("/regulator/demo_seed")
+def regulator_demo_seed():
+    """Seed the tracker with realistic demo data (phantom_vendor weak at 31%)."""
+    _regulator_tracker.reset_for_demo()
+    return {"status": "seeded", "report": _regulator_tracker.report()}
 
 
 def main():

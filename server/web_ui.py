@@ -101,6 +101,40 @@ TASK_DESCRIPTIONS = {
 PLACEHOLDER_JSON = "// Reset an episode first, then paste or generate JSON here."
 
 
+def _get_regulator_report() -> str:
+    data = _get("/regulator/report")
+    if "error" in data:
+        return f"Error: {data['error']}"
+    lines = [
+        f"Total audits recorded: {data.get('total_audits_recorded', 0)}  (window={data.get('window', 30)})",
+        "",
+        "FRAUD TYPE DETECTION RATES",
+        "─" * 40,
+    ]
+    for ft, status in data.get("detection_rates", {}).items():
+        lines.append(f"  {ft:<28} {status}")
+    lines += [
+        "",
+        f"False Positive Rate: {data.get('false_positive_rate', 'no data')}",
+        "",
+        f"BLIND SPOTS: {data.get('blind_spots', [])}",
+        "",
+        "GENERATOR WEIGHTS (next episode)",
+        "─" * 40,
+    ]
+    for ft, w in data.get("generator_weights", {}).items():
+        lines.append(f"  {ft:<28} {w:.3f}")
+    lines += ["", f"VERDICT: {data.get('verdict', '')}"]
+    return "\n".join(lines)
+
+
+def _seed_demo_data() -> str:
+    data = _post("/regulator/demo_seed", {})
+    if "error" in data:
+        return f"Error: {data['error']}"
+    return "✅ Demo data seeded — phantom_vendor at ~31% (blind spot)\n\n" + _get_regulator_report()
+
+
 def build_ui() -> gr.Blocks:
 
     # ---- State per Gradio session ----------------------------------------
@@ -212,119 +246,146 @@ def build_ui() -> gr.Blocks:
 
         session_state = gr.State(init_state)
 
-        # --- Controls row -------------------------------------------------
-        with gr.Row():
-            task_dd = gr.Dropdown(
-                choices=list(TASK_DESCRIPTIONS.keys()),
-                value="easy",
-                label="Task",
-                scale=1,
-            )
-            reset_btn = gr.Button("🔄 Reset Episode", variant="primary", scale=1)
-            status_box = gr.Textbox(
-                label="Status",
-                interactive=False,
-                scale=3,
-                lines=2,
-            )
+        with gr.Tabs():
 
-        task_info = gr.Textbox(label="Task Description", interactive=False, lines=1)
+            # ================================================================
+            # Tab 1 — Agent Tester
+            # ================================================================
+            with gr.Tab("Agent Tester"):
 
-        # --- Main two-column layout ---------------------------------------
-        with gr.Row():
-            # Left — environment data
-            with gr.Column(scale=5):
-                invoice_box = gr.Textbox(
-                    label="Invoice Data (raw text)",
-                    interactive=False,
-                    lines=16,
-                    max_lines=30,
-                )
-                ref_box = gr.Textbox(
-                    label="Reference Data (PO / vendor registry / catalog)",
-                    interactive=False,
-                    lines=8,
-                    max_lines=16,
-                )
-
-            # Right — agent interaction
-            with gr.Column(scale=5):
-                json_box = gr.Code(
-                    label="Extracted JSON",
-                    language="json",
-                    lines=16,
-                    value=PLACEHOLDER_JSON,
-                )
+                # --- Controls row -----------------------------------------
                 with gr.Row():
-                    llm_btn = gr.Button(
-                        "🤖 Run LLM Agent",
-                        variant="secondary",
-                        interactive=False,
+                    task_dd = gr.Dropdown(
+                        choices=list(TASK_DESCRIPTIONS.keys()),
+                        value="easy",
+                        label="Task",
+                        scale=1,
                     )
-                    submit_btn = gr.Button(
-                        "✅ Submit",
-                        variant="primary",
+                    reset_btn = gr.Button("🔄 Reset Episode", variant="primary", scale=1)
+                    status_box = gr.Textbox(
+                        label="Status",
                         interactive=False,
+                        scale=3,
+                        lines=2,
                     )
-                llm_status = gr.Textbox(
-                    label="LLM status",
+
+                task_info = gr.Textbox(label="Task Description", interactive=False, lines=1)
+
+                # --- Main two-column layout --------------------------------
+                with gr.Row():
+                    with gr.Column(scale=5):
+                        invoice_box = gr.Textbox(
+                            label="Invoice Data (raw text)",
+                            interactive=False,
+                            lines=16,
+                            max_lines=30,
+                        )
+                        ref_box = gr.Textbox(
+                            label="Reference Data (PO / vendor registry / catalog)",
+                            interactive=False,
+                            lines=8,
+                            max_lines=16,
+                        )
+
+                    with gr.Column(scale=5):
+                        json_box = gr.Code(
+                            label="Extracted JSON",
+                            language="json",
+                            lines=16,
+                            value=PLACEHOLDER_JSON,
+                        )
+                        with gr.Row():
+                            llm_btn = gr.Button(
+                                "🤖 Run LLM Agent",
+                                variant="secondary",
+                                interactive=False,
+                            )
+                            submit_btn = gr.Button(
+                                "✅ Submit",
+                                variant="primary",
+                                interactive=False,
+                            )
+                        llm_status = gr.Textbox(
+                            label="LLM status",
+                            interactive=False,
+                            lines=1,
+                        )
+
+                # --- Results row ------------------------------------------
+                with gr.Row():
+                    feedback_box = gr.Textbox(
+                        label="Grader Feedback",
+                        interactive=False,
+                        lines=5,
+                        scale=3,
+                    )
+                    breakdown_box = gr.Code(
+                        label="Reward Breakdown",
+                        language="json",
+                        lines=5,
+                        interactive=False,
+                        scale=2,
+                    )
+
+                history_box = gr.Textbox(
+                    label="Step History",
                     interactive=False,
-                    lines=1,
+                    lines=3,
                 )
 
-        # --- Results row --------------------------------------------------
-        with gr.Row():
-            feedback_box = gr.Textbox(
-                label="Grader Feedback",
-                interactive=False,
-                lines=5,
-                scale=3,
-            )
-            breakdown_box = gr.Code(
-                label="Reward Breakdown",
-                language="json",
-                lines=5,
-                interactive=False,
-                scale=2,
-            )
+                # --- Wiring -----------------------------------------------
+                task_dd.change(
+                    fn=lambda t: TASK_DESCRIPTIONS.get(t, ""),
+                    inputs=[task_dd],
+                    outputs=[task_info],
+                )
 
-        history_box = gr.Textbox(
-            label="Step History",
-            interactive=False,
-            lines=3,
-        )
+                reset_btn.click(
+                    fn=do_reset,
+                    inputs=[task_dd, session_state],
+                    outputs=[
+                        session_state, status_box, task_info,
+                        invoice_box, ref_box, json_box,
+                        feedback_box, history_box,
+                        llm_btn, submit_btn,
+                    ],
+                )
 
-        # --- Update task description on dropdown change -------------------
-        task_dd.change(
-            fn=lambda t: TASK_DESCRIPTIONS.get(t, ""),
-            inputs=[task_dd],
-            outputs=[task_info],
-        )
+                llm_btn.click(
+                    fn=do_llm,
+                    inputs=[task_dd, session_state],
+                    outputs=[json_box, llm_status],
+                )
 
-        # --- Reset --------------------------------------------------------
-        reset_btn.click(
-            fn=do_reset,
-            inputs=[task_dd, session_state],
-            outputs=[
-                session_state, status_box, task_info,
-                invoice_box, ref_box, json_box,
-                feedback_box, history_box,
-                llm_btn, submit_btn,
-            ],
-        )
+                submit_btn.click(
+                    fn=do_submit,
+                    inputs=[json_box, session_state],
+                    outputs=[session_state, status_box, feedback_box, history_box, breakdown_box],
+                )
 
-        # --- LLM agent ----------------------------------------------------
-        llm_btn.click(
-            fn=do_llm,
-            inputs=[task_dd, session_state],
-            outputs=[json_box, llm_status],
-        )
+            # ================================================================
+            # Tab 2 — Regulator Dashboard
+            # ================================================================
+            with gr.Tab("Regulator Dashboard"):
 
-        # --- Submit -------------------------------------------------------
-        submit_btn.click(
-            fn=do_submit,
-            inputs=[json_box, session_state],
-            outputs=[session_state, status_box, feedback_box, history_box, breakdown_box],
-        )
+                gr.Markdown(
+                    "## Regulator — Cross-Episode Auditor Oversight\n"
+                    "Monitors Auditor detection rates over 30 episodes. "
+                    "Detects blind spots and biases the Generator toward under-detected fraud types."
+                )
+
+                with gr.Row():
+                    refresh_btn = gr.Button("🔄 Refresh Report", variant="primary")
+                    seed_btn = gr.Button("🌱 Seed Demo Data", variant="secondary")
+
+                report_box = gr.Textbox(
+                    label="Regulator Report",
+                    interactive=False,
+                    lines=22,
+                    value="Click 'Refresh Report' or 'Seed Demo Data' to load.",
+                )
+
+                refresh_btn.click(fn=_get_regulator_report, inputs=[], outputs=[report_box])
+                seed_btn.click(fn=_seed_demo_data, inputs=[], outputs=[report_box])
 
     return demo
