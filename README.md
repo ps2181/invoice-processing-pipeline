@@ -1,3 +1,18 @@
+---
+title: Invoice Processing Pipeline
+emoji: 🧾
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+tags:
+  - openenv
+  - multi-agent
+  - grpo
+  - rl
+short_description: 5-agent adversarial fraud detection environment for RL training
+---
 <div align="center">
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=200&section=header&text=Invoice%20Processing%20Pipeline&fontSize=40&fontColor=fff&animation=twinkling&fontAlignY=35&desc=Self-Improving%20Multi-Agent%20Fraud%20Detection%20%7C%20OpenEnv%20%2B%20GRPO%20%2B%20Qwen2.5&descAlignY=55&descSize=16" width="100%"/>
