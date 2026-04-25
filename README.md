@@ -1,7 +1,3 @@
-<p align="center">
-  <h1>Invoice Processing Pipeline</h1>
-</p>
-
 <div class="card">
   <div class="card-header">
     <div class="card-header-dot"></div>
