@@ -11,7 +11,7 @@ tags:
   - multi-agent
   - grpo
   - rl
-short_description: 5-agent adversarial fraud detection environment for RL training
+short_description: 5-agent adversarial fraud detection RL environment
 ---
 <div align="center">
 
