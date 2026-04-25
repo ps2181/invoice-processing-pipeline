@@ -104,8 +104,12 @@ PLACEHOLDER_JSON = "// Reset an episode first, then paste or generate JSON here.
 def _run_pipeline_episode() -> str:
     """
     Run one complete multi-agent episode and return a formatted step-by-step trace.
-    Generator → Extractor (rule-based demo) → Auditor (rule-based demo) → Approver → Regulator
+    Generator → Extractor → Auditor → Approver → Regulator
+    Uses trained LoRA models when available, falls back to rule-based otherwise.
     """
+    import re as _re
+    from server.agents import run_extractor, run_auditor
+
     lines = ["=" * 56, "  MULTI-AGENT PIPELINE — LIVE EPISODE", "=" * 56, ""]
 
     # ── Step 0: Regulator sets Generator weights ──────────────────
@@ -130,12 +134,12 @@ def _run_pipeline_episode() -> str:
     n_inv = ep["n_invoices"]
     fw = ep.get("fraud_weights_used", {})
     raw_text = ep.get("raw_text", "")
+    ref_data = ep.get("reference_data", "")
 
-    # Figure out dominant fraud type from weights
     dominant = max(fw, key=lambda k: fw.get(k, 0)) if fw else "unknown"
 
     lines += [
-        "STEP 1 — GENERATOR creates invoice batch",
+        "STEP 1 — GENERATOR creates invoice batch  🤖 LoRA (ps2181/generator-lora-qwen2.5-1.5b)",
         "─" * 40,
         f"  Episode ID:    {episode_id[:16]}…",
         f"  Invoices:      {n_inv}",
@@ -148,26 +152,32 @@ def _run_pipeline_episode() -> str:
     lines.append("")
 
     # ── Step 2: Extractor reads the invoice ───────────────────────
-    # Use rule-based extraction for demo (no LLM needed)
-    import re as _re
-    vendor_match = _re.search(r"Vendor:\s*(.+)", raw_text)
-    date_match   = _re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", raw_text)
-    total_match  = _re.search(r"TOTAL\s+[\$£€]?([\d,.]+)", raw_text)
-    vendor = vendor_match.group(1).strip() if vendor_match else "Unknown Vendor"
-    date   = date_match.group(1).strip() if date_match else "2024-01-01"
-    total  = float(total_match.group(1).replace(",", "")) if total_match else 0.0
+    extracted, used_model = run_extractor(raw_text, ref_data)
+    agent_label = "🤖 LoRA (ps2181/extractor-lora-qwen2.5-1.5b)" if used_model else "📐 rule-based fallback"
 
-    extracted = {
-        "vendor": vendor, "date": date, "currency": "USD",
-        "total": total,
-        "line_items": [{"description": "Office Supplies", "qty": 1, "unit_price": total, "amount": total}]
-    }
+    if not extracted or not used_model:
+        # Rule-based fallback
+        vendor_match = _re.search(r"Vendor:\s*(.+)", raw_text)
+        date_match   = _re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", raw_text)
+        total_match  = _re.search(r"TOTAL\s+[\$£€]?([\d,.]+)", raw_text)
+        vendor = vendor_match.group(1).strip() if vendor_match else "Unknown Vendor"
+        date   = date_match.group(1).strip() if date_match else "2024-01-01"
+        total  = float(total_match.group(1).replace(",", "")) if total_match else 0.0
+        extracted = {
+            "vendor": vendor, "date": date, "currency": "USD", "total": total,
+            "line_items": [{"description": "Office Supplies", "qty": 1, "unit_price": total, "amount": total}],
+        }
+    else:
+        vendor = extracted.get("vendor", "Unknown Vendor")
+        date   = extracted.get("date", "2024-01-01")
+        total  = extracted.get("total", 0.0)
+
     ext_result = _post("/multi/extract", {"episode_id": episode_id, "extracted_data": extracted})
     ext_reward = ext_result.get("reward", 0)
     ext_bd = ext_result.get("breakdown", {})
 
     lines += [
-        "STEP 2 — EXTRACTOR reads invoice → structured JSON",
+        f"STEP 2 — EXTRACTOR reads invoice → structured JSON  {agent_label}",
         "─" * 40,
         f"  Vendor extracted:  {vendor}",
         f"  Date extracted:    {date}",
@@ -179,24 +189,36 @@ def _run_pipeline_episode() -> str:
     ]
 
     # ── Step 3: Auditor reviews for fraud ─────────────────────────
-    # Build audit results for all invoices in episode
+    audit_results, used_model = run_auditor(raw_text, ref_data, n_inv)
+    agent_label = "🤖 LoRA (ps2181/auditor-lora-qwen2.5-1.5b)" if used_model else "📐 rule-based fallback"
+
     inv_ids = _re.findall(r"ID:\s*(INV-\d+)", raw_text)
     if not inv_ids:
         inv_ids = [f"INV-{i:05d}" for i in range(n_inv)]
 
-    # Rule-based audit: flag phantom vendors (not in known list)
-    known = ["acme corp","globaltech solutions","prime office supplies","datastream inc",
-             "cloudnine services","metro logistics","pinnacle electronics","summit consulting",
-             "vertex manufacturing","horizon digital","nexgen software","bluepeak analytics"]
-    audit_results = []
-    for inv_id in inv_ids[:n_inv]:
-        is_phantom = vendor.lower() not in known
-        audit_results.append({
-            "invoice_id": inv_id,
-            "verdict": "flagged" if is_phantom else "approved",
-            "fraud_type": "phantom_vendor" if is_phantom else None,
-            "confidence": 0.78 if is_phantom else 0.85,
-        })
+    # Rule-based fallback if model returned nothing or wasn't available
+    if not audit_results:
+        known = ["acme corp","globaltech solutions","prime office supplies","datastream inc",
+                 "cloudnine services","metro logistics","pinnacle electronics","summit consulting",
+                 "vertex manufacturing","horizon digital","nexgen software","bluepeak analytics"]
+        audit_results = []
+        for inv_id in inv_ids[:n_inv]:
+            is_phantom = vendor.lower() not in known
+            audit_results.append({
+                "invoice_id": inv_id,
+                "verdict": "flagged" if is_phantom else "approved",
+                "fraud_type": "phantom_vendor" if is_phantom else None,
+                "confidence": 0.78 if is_phantom else 0.85,
+            })
+        agent_label = "📐 rule-based fallback"
+    else:
+        # Align model output invoice_ids to the ones present in raw_text
+        if audit_results and inv_ids:
+            model_ids = {r.get("invoice_id") for r in audit_results}
+            if not model_ids.intersection(set(inv_ids)):
+                for i, r in enumerate(audit_results):
+                    if i < len(inv_ids):
+                        r["invoice_id"] = inv_ids[i]
 
     aud_result = _post("/multi/audit", {"episode_id": episode_id, "audit_results": audit_results})
     aud_reward = aud_result.get("mean_reward", 0)
@@ -204,12 +226,12 @@ def _run_pipeline_episode() -> str:
     new_report = aud_result.get("tracker_report", {})
 
     lines += [
-        "STEP 3 — AUDITOR reviews for fraud",
+        f"STEP 3 — AUDITOR reviews for fraud  {agent_label}",
         "─" * 40,
     ]
     for r in audit_results:
-        verdict_str = f"FLAGGED ({r['fraud_type']})" if r["verdict"] == "flagged" else "APPROVED"
-        lines.append(f"  {r['invoice_id']}  →  {verdict_str}  conf={r['confidence']:.2f}")
+        verdict_str = f"FLAGGED ({r['fraud_type']})" if r.get("verdict") == "flagged" else "APPROVED"
+        lines.append(f"  {r.get('invoice_id','?')}  →  {verdict_str}  conf={r.get('confidence', 0):.2f}")
     lines += [
         f"  Mean Auditor reward: {aud_reward:.3f}",
         f"  Feedback: {aud_feedback[:120]}",
@@ -577,16 +599,34 @@ def build_ui() -> gr.Blocks:
                     "Each run uses real live data from the deployed environment."
                 )
 
-                run_btn = gr.Button("▶ Run Full Pipeline Episode", variant="primary", size="lg")
+                with gr.Row():
+                    run_btn = gr.Button("▶ Run Full Pipeline Episode", variant="primary", size="lg", scale=3)
+                    status_btn = gr.Button("🔍 Model Status", variant="secondary", scale=1)
+
+                model_status_box = gr.Textbox(
+                    label="Loaded Models",
+                    interactive=False,
+                    lines=3,
+                    value="Click '🔍 Model Status' to check which LoRAs are loaded.",
+                )
+
                 pipeline_output = gr.Textbox(
                     label="Pipeline Trace",
                     interactive=False,
-                    lines=40,
-                    value="Click 'Run Full Pipeline Episode' to start.",
+                    lines=45,
+                    value="Click '▶ Run Full Pipeline Episode' to start.",
                     elem_id="pipeline_trace",
                 )
 
+                def _get_model_status() -> str:
+                    from server.agents import models_status
+                    s = models_status()
+                    if not s:
+                        return "No models loaded yet — they load on first pipeline run."
+                    return "\n".join(f"  {k:<12} {v}" for k, v in s.items())
+
                 run_btn.click(fn=_run_pipeline_episode, inputs=[], outputs=[pipeline_output])
+                status_btn.click(fn=_get_model_status, inputs=[], outputs=[model_status_box])
 
             # ================================================================
             # Tab 3 — Regulator Dashboard
