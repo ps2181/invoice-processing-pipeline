@@ -43,8 +43,17 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 FRAUD_TYPES = ["phantom_vendor", "price_gouging", "math_fraud", "duplicate_submission"]
+COMPOUND_FRAUD_TYPES = [
+    ("phantom_vendor", "price_gouging"),
+    ("math_fraud", "duplicate_submission"),
+    ("phantom_vendor", "math_fraud"),
+]
+ALL_FRAUD_TYPES = FRAUD_TYPES + ["compound_fraud"]
+
 TRACKER_WINDOW = 30           # episodes in rolling window
 BLIND_SPOT_THRESHOLD = 0.50   # detection rate below this = blind spot
+EMERGING_THRESHOLD = 0.65     # Option A: declining trend warning zone
+TREND_WINDOW = 5              # Option A: episodes to compute trend over
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +84,10 @@ class AuditorPerformanceTracker:
         }
         self._fp_history: collections.deque = collections.deque(maxlen=TRACKER_WINDOW)
         self._total_audits: int = 0
+        # Option C: confidence calibration — track (correct, confidence) pairs per fraud type
+        self._confidence_history: Dict[str, collections.deque] = {
+            ft: collections.deque(maxlen=TRACKER_WINDOW) for ft in FRAUD_TYPES
+        }
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -85,10 +98,12 @@ class AuditorPerformanceTracker:
         true_fraud_type: Optional[str],
         predicted_verdict: str,
         predicted_fraud_type: Optional[str],
+        confidence: float = 0.5,
     ) -> None:
         """
         Record one invoice audit result into the rolling window.
         true_fraud_type=None means the invoice was clean (used for FP tracking).
+        confidence is used for calibration tracking (Option C).
         """
         with self._lock:
             self._total_audits += 1
@@ -100,6 +115,10 @@ class AuditorPerformanceTracker:
                     and predicted_fraud_type == true_fraud_type
                 )
                 self._fraud_history[true_fraud_type].append(detected)
+                # Option C: store (was_correct, confidence) pair
+                self._confidence_history[true_fraud_type].append(
+                    (detected, float(confidence))
+                )
 
     # ------------------------------------------------------------------
     # Read path
@@ -120,45 +139,197 @@ class AuditorPerformanceTracker:
         rates = self.detection_rates()
         return [ft for ft, rate in rates.items() if rate is not None and rate < threshold]
 
+    # ------------------------------------------------------------------
+    # Option A: Predictive trend detection
+
+    def _trend_slope(self, history: collections.deque) -> Optional[float]:
+        """
+        Compute slope of detection rate over last TREND_WINDOW episodes.
+        Positive = improving, negative = declining.
+        Returns None if not enough data.
+        """
+        data = list(history)
+        if len(data) < TREND_WINDOW * 2:
+            return None
+        recent = data[-TREND_WINDOW:]
+        prior = data[-TREND_WINDOW * 2: -TREND_WINDOW]
+        recent_rate = sum(recent) / len(recent)
+        prior_rate = sum(prior) / len(prior)
+        return round(recent_rate - prior_rate, 4)
+
+    def emerging_blind_spots(self) -> List[Dict[str, Any]]:
+        """
+        Option A: Detect fraud types in the warning zone (EMERGING_THRESHOLD > rate > BLIND_SPOT_THRESHOLD)
+        with a declining trend. These will become blind spots if not addressed.
+        """
+        rates = self.detection_rates()
+        emerging = []
+        with self._lock:
+            for ft in FRAUD_TYPES:
+                rate = rates[ft]
+                if rate is None:
+                    continue
+                slope = self._trend_slope(self._fraud_history[ft])
+                # Already a blind spot — covered separately
+                if rate < BLIND_SPOT_THRESHOLD:
+                    continue
+                # In warning zone with declining trend → emerging blind spot
+                if rate < EMERGING_THRESHOLD and (slope is None or slope <= 0):
+                    emerging.append({
+                        "fraud_type": ft,
+                        "current_rate": round(rate, 3),
+                        "trend_slope": slope,
+                        "episodes_until_critical": max(1, int((rate - BLIND_SPOT_THRESHOLD) * TRACKER_WINDOW)),
+                        "status": "⚠ EMERGING",
+                    })
+        return emerging
+
+    def forecast(self) -> Dict[str, Any]:
+        """
+        Option A: Full Regulator forecast — critical blind spots + emerging warnings.
+        Used by /regulator/forecast endpoint.
+        """
+        critical = self.blind_spots()
+        emerging = self.emerging_blind_spots()
+        rates = self.detection_rates()
+        trends = {}
+        with self._lock:
+            for ft in FRAUD_TYPES:
+                trends[ft] = self._trend_slope(self._fraud_history[ft])
+
+        return {
+            "critical_blind_spots": critical,
+            "emerging_blind_spots": [e["fraud_type"] for e in emerging],
+            "emerging_detail": emerging,
+            "trends": {
+                ft: (
+                    f"{'+' if (s or 0) > 0 else ''}{s:.3f} {'↑' if (s or 0) > 0 else '↓' if (s or 0) < 0 else '→'}"
+                    if s is not None else "insufficient data"
+                )
+                for ft, s in trends.items()
+            },
+            "detection_rates": {ft: round(r, 3) if r is not None else None for ft, r in rates.items()},
+            "recommendation": self._forecast_recommendation(critical, emerging),
+        }
+
+    def _forecast_recommendation(self, critical: List[str], emerging: List[Dict]) -> str:
+        parts = []
+        if critical:
+            parts.append(f"CRITICAL — retrain immediately on: {', '.join(critical)}")
+        if emerging:
+            names = [e["fraud_type"] for e in emerging]
+            parts.append(f"WATCH — declining trend on: {', '.join(names)}")
+        return "; ".join(parts) if parts else "All fraud types stable"
+
+    # ------------------------------------------------------------------
+    # Option C: Confidence calibration
+
+    def calibration_report(self) -> Dict[str, Any]:
+        """
+        Option C: For each fraud type, compare mean confidence on correct vs incorrect predictions.
+        Overconfident = high confidence on wrong predictions (dangerous).
+        Underconfident = low confidence on correct predictions (wastes escalations).
+        """
+        report = {}
+        with self._lock:
+            for ft in FRAUD_TYPES:
+                history = list(self._confidence_history[ft])
+                if not history:
+                    report[ft] = {"status": "no data"}
+                    continue
+
+                correct_confs = [c for (correct, c) in history if correct]
+                wrong_confs = [c for (correct, c) in history if not correct]
+
+                mean_correct_conf = round(sum(correct_confs) / len(correct_confs), 3) if correct_confs else None
+                mean_wrong_conf = round(sum(wrong_confs) / len(wrong_confs), 3) if wrong_confs else None
+
+                # Calibration error: overconfident if wrong predictions have high confidence
+                calibration_error = None
+                status = "ok"
+                if mean_wrong_conf is not None and mean_wrong_conf > 0.70:
+                    calibration_error = round(mean_wrong_conf, 3)
+                    status = f"⚠ OVERCONFIDENT on misses (mean_conf={mean_wrong_conf:.2f})"
+                elif mean_correct_conf is not None and mean_correct_conf < 0.50:
+                    status = f"↓ UNDERCONFIDENT on hits (mean_conf={mean_correct_conf:.2f})"
+
+                report[ft] = {
+                    "n_correct": len(correct_confs),
+                    "n_wrong": len(wrong_confs),
+                    "mean_confidence_when_correct": mean_correct_conf,
+                    "mean_confidence_when_wrong": mean_wrong_conf,
+                    "calibration_error": calibration_error,
+                    "status": status,
+                }
+        return report
+
     def generator_weights(self) -> Dict[str, float]:
         """
         Sampling weights for fraud type generation.
-        Blind spots share 60% weight; healthy types share 40%.
-        Falls back to uniform if no blind spots detected.
+        Blind spots share 50% weight; emerging types share 20%; healthy share 20%.
+        Option B: compound_fraud gets 10% weight when ≥2 blind spots exist.
+        Falls back to uniform if no blind spots.
         """
-        spots = self.blind_spots()
-        if not spots:
-            w = 1.0 / len(FRAUD_TYPES)
-            return {ft: round(w, 4) for ft in FRAUD_TYPES}
+        spots = set(self.blind_spots())
+        emerging = {e["fraud_type"] for e in self.emerging_blind_spots()}
+        healthy = set(FRAUD_TYPES) - spots - emerging
 
-        n_blind = len(spots)
-        n_healthy = len(FRAUD_TYPES) - n_blind
-        blind_w = 0.60 / n_blind
-        healthy_w = (0.40 / n_healthy) if n_healthy > 0 else 0.0
+        # Option B: compound fraud probability scales with number of blind spots
+        compound_w = round(min(0.10 * len(spots), 0.20), 4) if len(spots) >= 2 else 0.0
+        remaining = 1.0 - compound_w
 
-        return {
-            ft: round(blind_w if ft in spots else healthy_w, 4)
-            for ft in FRAUD_TYPES
-        }
+        if not spots and not emerging:
+            base_w = remaining / len(FRAUD_TYPES)
+            weights = {ft: round(base_w, 4) for ft in FRAUD_TYPES}
+        else:
+            n_spots = max(len(spots), 1)
+            n_emerging = max(len(emerging), 1) if emerging else 0
+            n_healthy = max(len(healthy), 1) if healthy else 0
+
+            spot_pool = remaining * 0.60
+            emerging_pool = remaining * 0.25 if emerging else 0.0
+            healthy_pool = remaining - spot_pool - emerging_pool
+
+            weights = {}
+            for ft in FRAUD_TYPES:
+                if ft in spots:
+                    weights[ft] = round(spot_pool / n_spots, 4)
+                elif ft in emerging:
+                    weights[ft] = round(emerging_pool / n_emerging, 4) if emerging else round(healthy_pool / n_healthy, 4)
+                else:
+                    weights[ft] = round(healthy_pool / n_healthy, 4) if n_healthy > 0 else 0.01
+
+        weights["compound_fraud"] = compound_w
+        return weights
 
     def report(self) -> Dict[str, Any]:
         rates = self.detection_rates()
         spots = self.blind_spots()
+        emerging = self.emerging_blind_spots()
         fp = self.false_positive_rate()
         weights = self.generator_weights()
+        calibration = self.calibration_report()
 
         formatted_rates = {}
-        for ft in FRAUD_TYPES:
-            r = rates[ft]
-            status = "no data"
-            if r is not None:
-                if r < BLIND_SPOT_THRESHOLD:
-                    status = f"{r:.0%}  ⚠ BLIND SPOT"
-                else:
-                    status = f"{r:.0%}  ✓ OK"
-            formatted_rates[ft] = status
+        with self._lock:
+            for ft in FRAUD_TYPES:
+                r = rates[ft]
+                slope = self._trend_slope(self._fraud_history[ft])
+                trend_str = ""
+                if slope is not None:
+                    trend_str = f" ({'+' if slope > 0 else ''}{slope:.2f}↑)" if slope > 0 else f" ({slope:.2f}↓)"
+                status = "no data"
+                if r is not None:
+                    if r < BLIND_SPOT_THRESHOLD:
+                        status = f"{r:.0%}  ⚠ BLIND SPOT{trend_str}"
+                    elif r < EMERGING_THRESHOLD:
+                        status = f"{r:.0%}  ⚡ EMERGING{trend_str}"
+                    else:
+                        status = f"{r:.0%}  ✓ OK{trend_str}"
+                formatted_rates[ft] = status
 
         fp_str = f"{fp:.0%}  ✓ OK" if fp is not None else "no data"
+        emerging_names = [e["fraud_type"] for e in emerging]
 
         return {
             "total_audits_recorded": self._total_audits,
@@ -166,6 +337,8 @@ class AuditorPerformanceTracker:
             "detection_rates": formatted_rates,
             "false_positive_rate": fp_str,
             "blind_spots": spots,
+            "emerging_blind_spots": emerging_names,
+            "calibration": calibration,
             "generator_weights": weights,
             "verdict": (
                 f"Recommend retraining on: {', '.join(spots)}"
@@ -178,23 +351,34 @@ class AuditorPerformanceTracker:
         """Seed tracker with realistic demo data (for hackathon demo only)."""
         with self._lock:
             self._initialise()
-            # Simulate 20 episodes: phantom_vendor weak (31%), others decent
+            # phantom_vendor: weak at 32%, declining trend, overconfident on misses
             for _ in range(13):
                 self._fraud_history["phantom_vendor"].append(False)
+                self._confidence_history["phantom_vendor"].append((False, 0.82))  # overconfident + wrong
             for _ in range(6):
                 self._fraud_history["phantom_vendor"].append(True)
+                self._confidence_history["phantom_vendor"].append((True, 0.71))
+            # price_gouging: healthy
             for _ in range(18):
                 self._fraud_history["price_gouging"].append(True)
+                self._confidence_history["price_gouging"].append((True, 0.85))
             for _ in range(6):
                 self._fraud_history["price_gouging"].append(False)
+                self._confidence_history["price_gouging"].append((False, 0.45))
+            # math_fraud: healthy
             for _ in range(17):
                 self._fraud_history["math_fraud"].append(True)
+                self._confidence_history["math_fraud"].append((True, 0.88))
             for _ in range(4):
                 self._fraud_history["math_fraud"].append(False)
+                self._confidence_history["math_fraud"].append((False, 0.40))
+            # duplicate_submission: borderline emerging
             for _ in range(15):
                 self._fraud_history["duplicate_submission"].append(True)
+                self._confidence_history["duplicate_submission"].append((True, 0.76))
             for _ in range(7):
                 self._fraud_history["duplicate_submission"].append(False)
+                self._confidence_history["duplicate_submission"].append((False, 0.55))
             for _ in range(2):
                 self._fp_history.append(True)
             for _ in range(16):
@@ -303,6 +487,7 @@ def compute_auditor_reward(
     """
     +0.99 correct fraud detection (right verdict + right type)
     +0.90 correct clean clearance
+    +0.65 compound fraud: caught one of two signals (Option B partial credit)
     +0.50 flagged fraud but wrong type
     +0.01 miss or false positive
     """
@@ -310,6 +495,12 @@ def compute_auditor_reward(
     pred_flagged = predicted_verdict == "flagged"
 
     if is_fraud and pred_flagged:
+        # Option B: compound fraud partial credit
+        if true_fraud_type and true_fraud_type.startswith("compound_fraud:"):
+            sub_types = true_fraud_type.split(":")[1].split("+")
+            if predicted_fraud_type in sub_types:
+                return 0.65, f"Compound fraud: caught '{predicted_fraud_type}' (one of {sub_types})"
+            return 0.50, f"Compound fraud flagged but type missed (expected one of {sub_types}, got {predicted_fraud_type})"
         if predicted_fraud_type == true_fraud_type:
             return 0.99, f"Correct: {true_fraud_type} detected"
         return 0.50, f"Flagged but wrong type (expected {true_fraud_type}, got {predicted_fraud_type})"
@@ -345,21 +536,39 @@ def compute_generator_reward(auditor_detected: bool, approver_approved: bool) ->
 def compute_regulator_reward(
     predicted_blind_spots: List[str],
     actual_blind_spots: List[str],
+    predicted_emerging: Optional[List[str]] = None,
 ) -> Tuple[float, str]:
-    """Precision (0.40) + recall (0.40) + no-over-flag bonus (0.20)."""
+    """
+    Precision (0.35) + recall (0.35) + no-over-flag (0.15) + early warning bonus (0.15).
+    Option A: +0.15 bonus if Regulator correctly predicts emerging blind spots
+              that later become critical (proactive oversight reward).
+    """
     if not actual_blind_spots and not predicted_blind_spots:
-        return 0.99, "Correctly predicted no blind spots"
-    if not actual_blind_spots:
-        return 0.01, "False alarm: predicted blind spots when none exist"
-    if not predicted_blind_spots:
-        return 0.01, "Missed all blind spots"
+        base = 0.85  # reserve 0.15 for early warning
+    elif not actual_blind_spots:
+        base = 0.01
+    elif not predicted_blind_spots:
+        base = 0.01
+    else:
+        correct = set(predicted_blind_spots) & set(actual_blind_spots)
+        prec = len(correct) / len(predicted_blind_spots)
+        rec = len(correct) / len(actual_blind_spots)
+        no_over_flag = 1.0 if prec >= 0.5 else 0.0
+        base = 0.35 * prec + 0.35 * rec + 0.15 * no_over_flag
 
-    correct = set(predicted_blind_spots) & set(actual_blind_spots)
-    prec = len(correct) / len(predicted_blind_spots)
-    rec = len(correct) / len(actual_blind_spots)
-    no_over_flag = 1.0 if prec >= 0.5 else 0.0
-    score = round(max(0.01, min(0.40 * prec + 0.40 * rec + 0.20 * no_over_flag, 0.99)), 4)
-    return score, f"Blind spot prediction: precision={prec:.2f}, recall={rec:.2f}"
+    # Option A: early warning bonus — did Regulator predict emerging types?
+    early_bonus = 0.0
+    actual_emerging = [e["fraud_type"] for e in tracker.emerging_blind_spots()]
+    if predicted_emerging and actual_emerging:
+        early_correct = set(predicted_emerging) & set(actual_emerging)
+        if early_correct:
+            early_bonus = round(0.15 * len(early_correct) / len(actual_emerging), 4)
+
+    score = round(max(0.01, min(base + early_bonus, 0.99)), 4)
+    feedback_parts = [f"Blind spot prediction: score={base:.3f}"]
+    if early_bonus > 0:
+        feedback_parts.append(f"Early warning bonus: +{early_bonus:.3f} (predicted {list(set(predicted_emerging) & set(actual_emerging))})")
+    return score, "; ".join(feedback_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -429,9 +638,9 @@ def _generate_expert_batch_biased(
     random.shuffle(all_indices)
     fraud_indices = set(all_indices[:n_fraudulent])
 
-    # Weighted fraud type selection
+    # Weighted fraud type selection (includes compound_fraud if weights > 0)
     types_pool = list(fraud_weights.keys())
-    weights_pool = [fraud_weights[ft] for ft in types_pool]
+    weights_pool = [fraud_weights.get(ft, 0.0) for ft in types_pool]
     chosen_fraud_types = random.choices(types_pool, weights=weights_pool, k=n_fraudulent)
     fraud_type_map = {idx: chosen_fraud_types[i] for i, idx in enumerate(list(fraud_indices))}
 
@@ -464,6 +673,30 @@ def _generate_expert_batch_biased(
             elif ftype == "math_fraud":
                 real_total = round(sum(it["amount"] for it in inv["line_items"]), 2)
                 inv["total"] = round(real_total * random.uniform(1.08, 1.18), 2)
+
+            elif ftype == "compound_fraud":
+                # Option B: inject TWO fraud signals into one invoice
+                combo = random.choice(COMPOUND_FRAUD_TYPES)
+                sub_types = list(combo)
+                for sub_ftype in sub_types:
+                    if sub_ftype == "phantom_vendor":
+                        inv["vendor"] = random.choice(PHANTOM_VENDORS)
+                    elif sub_ftype == "price_gouging":
+                        item = random.choice(inv["line_items"])
+                        market_max = MARKET_PRICE_MAX.get(item["description"], item["unit_price"])
+                        item["unit_price"] = round(market_max * random.uniform(1.6, 2.0), 2)
+                        item["amount"] = round(item["qty"] * item["unit_price"], 2)
+                        inv["total"] = round(sum(it["amount"] for it in inv["line_items"]), 2)
+                    elif sub_ftype == "math_fraud":
+                        real_total = round(sum(it["amount"] for it in inv["line_items"]), 2)
+                        inv["total"] = round(real_total * random.uniform(1.08, 1.18), 2)
+                    elif sub_ftype == "duplicate_submission" and invoice_history:
+                        # partial duplicate: same vendor+date but different total
+                        original = random.choice(invoice_history)
+                        inv["vendor"] = original["vendor"]
+                        inv["date"] = original["date"]
+                # Store both sub-types in fraud_type for grading
+                ftype = f"compound_fraud:{'+'.join(sorted(sub_types))}"
 
             ground_truth.append({
                 "invoice_id": inv["invoice_id"],
@@ -626,8 +859,8 @@ def handle_audit(
         rewards.append(reward)
         feedbacks.append(f"{inv_id}: {fb}")
 
-        # Record to global tracker
-        tracker.record_audit(true_ftype, pred_verdict, pred_ftype)
+        # Record to global tracker (with confidence for Option C calibration)
+        tracker.record_audit(true_ftype, pred_verdict, pred_ftype, confidence)
 
         approver_inputs.append({
             "invoice_id": inv_id,
