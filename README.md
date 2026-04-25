@@ -525,7 +525,9 @@ invoice-processing-pipeline/
 | 🤗 **Extractor Model** | https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b |
 | 🕵️ **Auditor Model** | https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b |
 | ⚡ **Generator Model** | https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b |
-| 📓 **Training Colab** | https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB |
+| 📓 **Training Colab(Auditor Agent)** | https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB |
+| 📓 **Training Colab(Extractor Agent)** | https://colab.research.google.com/drive/1fxfBt13LjmT4m98pJq-b5B__1ytFeszK?usp=sharing |
+| 📓 **Training Colab(Generator Agent)** | https://colab.research.google.com/drive/1O293_VBZQCthxlGpgvz5kxoty3zcsWGH?usp=sharing |
 | 💻 **GitHub** | https://github.com/ps2181/invoice-processing-pipeline |
 | 🧩 **OpenEnv Framework** | https://github.com/meta-pytorch/OpenEnv |
 
