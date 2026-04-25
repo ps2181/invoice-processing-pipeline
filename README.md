@@ -121,19 +121,7 @@ Tracks `(confidence, correct?)` pairs per fraud type.<br/>Detects **overconfiden
 ## 🎯 Seven Tasks — Progressive Difficulty
 
 <div align="center">
-
-```
-Easy ──────────────────────────────────────────────────────────► Expert
-  │            │            │           │           │       │       │
-  ▼            ▼            ▼           ▼           ▼       ▼       ▼
-easy        medium         hard       expert    adversarial nego supply
-                                                           tiate chain
-Single      Batch         Extract    Full        OCR       Ask    Detect
-invoice     clean &       + recon-   fraud       corrupt   clari  logistics
-extraction  normalise     cile vs    audit       +traps    fying  anomalies
-            messy docs    PO         (4 types)             Qs
-```
-
+<img width="1384" height="367" alt="image" src="https://github.com/user-attachments/assets/a87f472d-3cfd-4947-a8b6-bd04cd08562f" />
 </div>
 
 | # | Task | Difficulty | What the Agent Must Do |
