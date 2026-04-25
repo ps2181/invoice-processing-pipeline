@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/metadata-card.svg" alt="Space metadata" />
+<img width="1440" height="832" alt="image" src="https://github.com/user-attachments/assets/2334ba54-17a8-4536-94f7-5c9510bbd13d" />
 </p>
 
 <div class="card">
