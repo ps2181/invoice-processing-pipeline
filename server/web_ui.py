@@ -101,6 +101,177 @@ TASK_DESCRIPTIONS = {
 PLACEHOLDER_JSON = "// Reset an episode first, then paste or generate JSON here."
 
 
+def _run_pipeline_episode() -> str:
+    """
+    Run one complete multi-agent episode and return a formatted step-by-step trace.
+    Generator → Extractor (rule-based demo) → Auditor (rule-based demo) → Approver → Regulator
+    """
+    lines = ["=" * 56, "  MULTI-AGENT PIPELINE — LIVE EPISODE", "=" * 56, ""]
+
+    # ── Step 0: Regulator sets Generator weights ──────────────────
+    report = _get("/regulator/report")
+    blind_spots = report.get("blind_spots", [])
+    weights = report.get("generator_weights", {})
+    lines += [
+        "STEP 0 — REGULATOR sets Generator weights",
+        "─" * 40,
+        f"  Blind spots detected: {blind_spots if blind_spots else 'none'}",
+    ]
+    for ft, w in weights.items():
+        bar = "█" * max(1, int(w * 20))
+        lines.append(f"  {ft:<28} {w:.2f}  {bar}")
+    lines.append("")
+
+    # ── Step 1: Generator creates biased episode ──────────────────
+    ep = _post("/multi/reset", {})
+    if "error" in ep:
+        return f"Error starting episode: {ep['error']}"
+    episode_id = ep["episode_id"]
+    n_inv = ep["n_invoices"]
+    fw = ep.get("fraud_weights_used", {})
+    raw_text = ep.get("raw_text", "")
+
+    # Figure out dominant fraud type from weights
+    dominant = max(fw, key=lambda k: fw.get(k, 0)) if fw else "unknown"
+
+    lines += [
+        "STEP 1 — GENERATOR creates invoice batch",
+        "─" * 40,
+        f"  Episode ID:    {episode_id[:16]}…",
+        f"  Invoices:      {n_inv}",
+        f"  Dominant type: {dominant} ({fw.get(dominant, 0):.0%} weight — Regulator-biased)",
+        f"  Invoice preview:",
+    ]
+    for line in raw_text.split("\n")[:12]:
+        lines.append(f"    {line}")
+    lines.append("    …")
+    lines.append("")
+
+    # ── Step 2: Extractor reads the invoice ───────────────────────
+    # Use rule-based extraction for demo (no LLM needed)
+    import re as _re
+    vendor_match = _re.search(r"Vendor:\s*(.+)", raw_text)
+    date_match   = _re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", raw_text)
+    total_match  = _re.search(r"TOTAL\s+[\$£€]?([\d,.]+)", raw_text)
+    vendor = vendor_match.group(1).strip() if vendor_match else "Unknown Vendor"
+    date   = date_match.group(1).strip() if date_match else "2024-01-01"
+    total  = float(total_match.group(1).replace(",", "")) if total_match else 0.0
+
+    extracted = {
+        "vendor": vendor, "date": date, "currency": "USD",
+        "total": total,
+        "line_items": [{"description": "Office Supplies", "qty": 1, "unit_price": total, "amount": total}]
+    }
+    ext_result = _post("/multi/extract", {"episode_id": episode_id, "extracted_data": extracted})
+    ext_reward = ext_result.get("reward", 0)
+    ext_bd = ext_result.get("breakdown", {})
+
+    lines += [
+        "STEP 2 — EXTRACTOR reads invoice → structured JSON",
+        "─" * 40,
+        f"  Vendor extracted:  {vendor}",
+        f"  Date extracted:    {date}",
+        f"  Total extracted:   {total}",
+        f"  Extractor reward:  {ext_reward:.3f}",
+        f"  Breakdown: format={ext_bd.get('format',0):.2f}  field={ext_bd.get('field_accuracy',0):.2f}  "
+        f"math={ext_bd.get('math_consistency',0):.2f}  completeness={ext_bd.get('completeness',0):.2f}",
+        "",
+    ]
+
+    # ── Step 3: Auditor reviews for fraud ─────────────────────────
+    # Build audit results for all invoices in episode
+    inv_ids = _re.findall(r"ID:\s*(INV-\d+)", raw_text)
+    if not inv_ids:
+        inv_ids = [f"INV-{i:05d}" for i in range(n_inv)]
+
+    # Rule-based audit: flag phantom vendors (not in known list)
+    known = ["acme corp","globaltech solutions","prime office supplies","datastream inc",
+             "cloudnine services","metro logistics","pinnacle electronics","summit consulting",
+             "vertex manufacturing","horizon digital","nexgen software","bluepeak analytics"]
+    audit_results = []
+    for inv_id in inv_ids[:n_inv]:
+        is_phantom = vendor.lower() not in known
+        audit_results.append({
+            "invoice_id": inv_id,
+            "verdict": "flagged" if is_phantom else "approved",
+            "fraud_type": "phantom_vendor" if is_phantom else None,
+            "confidence": 0.78 if is_phantom else 0.85,
+        })
+
+    aud_result = _post("/multi/audit", {"episode_id": episode_id, "audit_results": audit_results})
+    aud_reward = aud_result.get("mean_reward", 0)
+    aud_feedback = aud_result.get("feedback", "")
+    new_report = aud_result.get("tracker_report", {})
+
+    lines += [
+        "STEP 3 — AUDITOR reviews for fraud",
+        "─" * 40,
+    ]
+    for r in audit_results:
+        verdict_str = f"FLAGGED ({r['fraud_type']})" if r["verdict"] == "flagged" else "APPROVED"
+        lines.append(f"  {r['invoice_id']}  →  {verdict_str}  conf={r['confidence']:.2f}")
+    lines += [
+        f"  Mean Auditor reward: {aud_reward:.3f}",
+        f"  Feedback: {aud_feedback[:120]}",
+        "",
+    ]
+
+    # ── Step 4: Approver final decision ───────────────────────────
+    approver_decisions = []
+    for r in audit_results:
+        if r["verdict"] == "flagged" and r["confidence"] >= 0.80:
+            decision = "REJECT"
+        elif r["verdict"] == "flagged":
+            decision = "ESCALATE"
+        else:
+            decision = "APPROVE"
+        approver_decisions.append((r["invoice_id"], decision))
+
+    lines += [
+        "STEP 4 — APPROVER final decision",
+        "─" * 40,
+    ]
+    for inv_id, decision in approver_decisions:
+        icon = "❌" if decision == "REJECT" else "⚠️" if decision == "ESCALATE" else "✅"
+        lines.append(f"  {inv_id}  →  {icon} {decision}")
+    lines.append("")
+
+    # Generator adversarial reward
+    n_evaded = sum(1 for r in audit_results if r["verdict"] == "approved")
+    gen_reward = 0.85 if n_evaded == n_inv else (0.60 if n_evaded > 0 else 0.10)
+    lines += [
+        f"  Generator adversarial reward: {gen_reward:.2f}",
+        f"  ({n_evaded}/{n_inv} invoices evaded Auditor)",
+        "",
+    ]
+
+    # ── Step 5: Regulator updates ─────────────────────────────────
+    new_blind_spots = new_report.get("blind_spots", [])
+    new_emerging = new_report.get("emerging_blind_spots", [])
+    new_weights = new_report.get("generator_weights", {})
+
+    lines += [
+        "STEP 5 — REGULATOR updates cross-episode tracker",
+        "─" * 40,
+        f"  Total audits recorded: {new_report.get('total_audits_recorded', '?')}",
+        f"  Critical blind spots:  {new_blind_spots if new_blind_spots else 'none'}",
+        f"  Emerging blind spots:  {new_emerging if new_emerging else 'none'}",
+        "",
+        "  Updated Generator weights for next episode:",
+    ]
+    for ft, w in new_weights.items():
+        changed = "  ← BOOSTED" if w > 0.3 else ""
+        lines.append(f"    {ft:<28} {w:.3f}{changed}")
+
+    lines += [
+        "",
+        "=" * 56,
+        "  LOOP COMPLETE — next episode uses updated weights",
+        "=" * 56,
+    ]
+    return "\n".join(lines)
+
+
 def _get_regulator_report() -> str:
     data = _get("/regulator/report")
     forecast = _get("/regulator/forecast")
@@ -393,7 +564,32 @@ def build_ui() -> gr.Blocks:
                 )
 
             # ================================================================
-            # Tab 2 — Regulator Dashboard
+            # Tab 2 — Multi-Agent Pipeline Demo
+            # ================================================================
+            with gr.Tab("Multi-Agent Pipeline"):
+
+                gr.Markdown(
+                    "## Live 5-Agent Pipeline\n"
+                    "Runs one complete episode through all agents in sequence:\n\n"
+                    "**Regulator** sets weights → **Generator** creates biased invoice → "
+                    "**Extractor** reads it → **Auditor** flags fraud → "
+                    "**Approver** decides → **Regulator** updates tracker\n\n"
+                    "Each run uses real live data from the deployed environment."
+                )
+
+                run_btn = gr.Button("▶ Run Full Pipeline Episode", variant="primary", size="lg")
+                pipeline_output = gr.Textbox(
+                    label="Pipeline Trace",
+                    interactive=False,
+                    lines=40,
+                    value="Click 'Run Full Pipeline Episode' to start.",
+                    elem_id="pipeline_trace",
+                )
+
+                run_btn.click(fn=_run_pipeline_episode, inputs=[], outputs=[pipeline_output])
+
+            # ================================================================
+            # Tab 3 — Regulator Dashboard
             # ================================================================
             with gr.Tab("Regulator Dashboard"):
 
