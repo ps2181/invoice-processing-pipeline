@@ -6,11 +6,6 @@
 **and automatically gets harder when it finds its own blind spots.**
 
 <br/>
-
-[![Live Demo](https://img.shields.io/badge/🚀%20Live%20Demo-HuggingFace%20Spaces-FF9D00?style=for-the-badge&logo=huggingface&logoColor=white)](https://ps2181-invoice-processing-pipeline.hf.space/web)
-[![Colab](https://img.shields.io/badge/Training%20Colab-Open%20Notebook-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB)
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github)](https://github.com/ps2181/invoice-processing-pipeline)
-
 <br/>
 
 *Meta PyTorch OpenEnv Hackathon · Grand Finale · April 25–26, 2026*  
