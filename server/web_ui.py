@@ -605,7 +605,14 @@ def _make_training_curves():
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    return fig
+
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    from PIL import Image
+    return Image.open(buf)
 
 
 def _seed_demo_data() -> str:
@@ -849,9 +856,11 @@ def build_ui() -> gr.Blocks:
                 except Exception:
                     _curves_fig = None
 
-                curve_plot = gr.Plot(
+                curve_plot = gr.Image(
                     label="Reward Curves",
                     value=_curves_fig,
+                    type="pil",
+                    show_download_button=False,
                 )
 
                 gr.Markdown(
