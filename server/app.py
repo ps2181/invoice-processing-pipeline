@@ -8,6 +8,7 @@ keyed by episode_id, supporting concurrent agents without state conflicts.
 
 from __future__ import annotations
 
+import random
 import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional
@@ -38,9 +39,12 @@ try:
     from server.web_ui import build_ui
     _gradio_app = build_ui()
     app = gr.mount_gradio_app(app, _gradio_app, path="/web")
+    print("[startup] Gradio UI mounted at /web")
 except Exception as _e:
-    import warnings
+    import traceback, warnings
     warnings.warn(f"Gradio UI not loaded: {_e}")
+    traceback.print_exc()
+    print(f"[startup] /web FAILED: {_e}")
 
 # ---------------------------------------------------------------------------
 # Session registry — one InvoiceEnvironment per episode_id

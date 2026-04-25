@@ -13,11 +13,6 @@ from typing import Any, Dict, Tuple
 
 import gradio as gr
 import httpx
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -456,6 +451,12 @@ def _make_training_curves():
     Render training reward curves for all 3 GRPO-trained agents.
     Data points from actual Colab training runs.
     """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+    import numpy as np
+
     # ── Real training data from Colab runs ────────────────────────────────────
 
     # Extractor — crashed at step 15–20 due to _MAX_SESSIONS=50 bug.
@@ -843,9 +844,14 @@ def build_ui() -> gr.Blocks:
                     "| **Generator** | Fraud format learned (~0.22) | Live evasion reward had same episode_id bug — needs rerun with fix |"
                 )
 
+                try:
+                    _curves_fig = _make_training_curves()
+                except Exception:
+                    _curves_fig = None
+
                 curve_plot = gr.Plot(
                     label="Reward Curves",
-                    value=_make_training_curves(),
+                    value=_curves_fig,
                 )
 
                 gr.Markdown(
