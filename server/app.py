@@ -28,6 +28,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Auto-seed Regulator tracker on startup so pipeline demo has meaningful data immediately
+from server.multi_agent_environment import tracker as _startup_tracker
+_startup_tracker.reset_for_demo()
+
 # Mount Gradio web UI at /web
 try:
     import gradio as gr
