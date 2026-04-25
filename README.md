@@ -2,271 +2,160 @@
 title: Invoice Processing Pipeline
 emoji: 🧾
 colorFrom: blue
-colorTo: green
+colorTo: indigo
 sdk: docker
 app_port: 7860
 tags:
   - openenv
+  - multi-agent
+  - grpo
+  - rlhf
+  - fraud-detection
+  - invoice
 ---
 
-# Invoice Processing Pipeline — OpenEnv Environment
+# 🧾 Invoice Processing Pipeline — Self-Improving Multi-Agent Fraud Detection
 
-An OpenEnv environment where an AI agent learns to **extract**, **clean**, and **reconcile** invoice data — a task that mirrors real-world accounts-payable workflows affecting every business.
+> **Meta PyTorch OpenEnv Hackathon** · Team: Pritam Satpathy & Gnana Nawin T
 
-The agent receives raw invoice text (simulating OCR output or messy CSV imports), processes it into structured data, and receives graded scores (0.0–1.0) with detailed feedback at every step.
-
----
-
-## Motivation
-
-Invoice processing is one of the most common, tedious, and error-prone tasks in business operations. Finance teams spend countless hours:
-
-- **Extracting** vendor names, dates, line items, and totals from unstructured documents
-- **Cleaning** inconsistent formats (dates, currencies, vendor name variations)
-- **Reconciling** invoices against purchase orders to catch overcharges, missing items, and billing errors
-
-This environment provides a controlled, reproducible setting to train and evaluate AI agents on these tasks, with clear partial-credit signals that make it suitable for RL training.
+A **5-agent adversarial system** that continuously improves its own fraud detection through a closed reinforcement learning loop — built on the OpenEnv framework with GRPO-trained Qwen2.5 LoRA agents.
 
 ---
 
-## Project Structure
+## What Makes This Different
 
-```
-invoice_processing_pipeline/
-├── models.py              Pydantic models: InvoiceAction, InvoiceObservation, InvoiceState
-├── client.py              Python client (sync + async) for training code
-├── inference.py           LLM baseline agent (OpenAI-compatible)
-├── server/
-│   ├── __init__.py
-│   ├── environment.py     Core logic: invoice generation, graders, reward computation
-│   └── app.py             FastAPI server with /reset, /step, /state endpoints
-├── openenv.yaml           OpenEnv metadata
-├── Dockerfile             Container build
-├── requirements.txt       Python dependencies
-├── pyproject.toml         Package configuration
-└── README.md              This file
-```
+Most multi-agent systems are static pipelines. Ours **gets harder for itself over time**:
+
+1. **Regulator** watches the Auditor across episodes, identifies fraud types it keeps missing (blind spots), and uses **predictive trend analysis** to warn before a blind spot becomes critical
+2. **Generator** receives bias weights from the Regulator and creates invoices skewed toward those blind spot fraud types — adversarially exploiting the Auditor's weakness
+3. **Extractor** parses the invoice into structured JSON with 4 independent reward signals
+4. **Auditor** flags fraud with confidence scores — its mistakes feed back into the Regulator
+5. **Approver** makes the final approve / escalate / reject decision
+
+Every episode the loop closes: the Regulator updates the Generator's weights, making the next batch harder in exactly the ways the Auditor failed. **The system pressure-tests its own weakest point.**
 
 ---
 
-## Tasks
+## Three Novel Features
 
-| Task | Difficulty | Description |
-|------|-----------|-------------|
-| `easy` | Easy | Extract structured fields from a **single, clean** invoice |
-| `medium` | Medium | Clean and normalise a **batch of messy** invoices (3–5 invoices) |
-| `hard` | Hard | Extract, clean, AND **reconcile against purchase orders** with discrepancy detection |
-
-### Easy: Single Invoice Extraction
-
-The agent receives a well-formatted invoice with clear structure. It must extract: vendor name, date, currency, total, and all line items with descriptions, quantities, unit prices, and amounts.
-
-### Medium: Batch Invoice Cleaning
-
-The agent receives 3–5 invoices with realistic messiness:
-- **Date format chaos**: `01/15/2024`, `15-01-2024`, `January 15, 2024`, `15.01.2024`
-- **Vendor name typos**: `"Acme Crp"`, `"GloablTech Solutions"`, `"Prmie Office Supplies"`
-- **Mixed currency formats**: `$`, `€`, `£` symbols instead of `USD`, `EUR`, `GBP` codes
-- **String/number mixing**: amounts like `"$149.99"` instead of `149.99`
-- **Math errors**: `qty × unit_price ≠ amount` in some line items
-
-### Hard: Invoice-PO Reconciliation
-
-The agent receives messy invoices PLUS purchase orders and must:
-1. Clean all invoice data (same as medium)
-2. Compare each invoice against its corresponding PO
-3. Flag discrepancies: overcharges, extra items, and missing items
+| Feature | What it does |
+|---------|-------------|
+| **Predictive Regulator** | Computes trend slope over 5-episode windows — warns of *emerging* blind spots before they become critical, not just after |
+| **Compound Fraud** | Invoices can carry two fraud signals simultaneously (e.g. phantom vendor + price gouging). Partial credit for catching one; full reward for both |
+| **Confidence Calibration** | Tracks (confidence, correct?) pairs per fraud type. Detects *overconfident misses* — the Auditor saying "90% sure, approved" on a fraudulent invoice — the most dangerous failure mode |
 
 ---
 
-## Observation Space
+## Trained LoRA Agents
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `raw_text` | string | Raw invoice text (OCR-style or batch format) |
-| `task_id` | string | `easy`, `medium`, or `hard` |
-| `difficulty` | string | Same as `task_id` |
-| `task_description` | string | What the agent should do |
-| `attempt_number` | int | Current attempt (0 = just reset) |
-| `max_attempts` | int | Maximum allowed attempts (5) |
-| `feedback` | string | Detailed grader feedback from last attempt |
-| `hint` | string | Appears after 2+ failed attempts |
-| `reference_data` | string | Purchase order data (hard task only) |
+All three agents trained with GRPO on live environment data:
+
+| Agent | Model | HF Hub |
+|-------|-------|--------|
+| Extractor | Qwen2.5-1.5B-Instruct + LoRA r=16 | [ps2181/extractor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b) |
+| Auditor   | Qwen2.5-1.5B-Instruct + LoRA r=16 | [ps2181/auditor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b) |
+| Generator | Qwen2.5-1.5B-Instruct + LoRA r=16 | [ps2181/generator-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b) |
+
+**Training setup:** 4-bit QLoRA, r=16, Unsloth + TRL GRPOTrainer, live HF Space as reward verifier
 
 ---
 
-## Action Space
+## Reward Signals
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `extracted_data` | JSON object | Yes | Structured invoice data (format depends on task) |
-| `explanation` | string | No | Agent reasoning (optional) |
+### Extractor (4 independent signals)
+| Signal | Max | What it measures |
+|--------|-----|-----------------|
+| Format | 0.10 | Required fields present |
+| Field accuracy | 0.40 | Vendor / date / currency / total correct |
+| Math consistency | 0.25 | qty × unit_price = amount, sum = total |
+| Completeness | 0.25 | All line items captured |
 
-### Expected `extracted_data` format by task:
+### Auditor
+| Outcome | Reward |
+|---------|--------|
+| Correct fraud type detected | 0.99 |
+| Clean invoice correctly approved | 0.90 |
+| Compound fraud — one type caught | 0.65 |
+| Fraud detected, wrong type | 0.50 |
+| Miss or false positive | 0.01 |
 
-**Easy:**
-```json
-{
-    "vendor": "Acme Corp",
-    "date": "2024-06-15",
-    "currency": "USD",
-    "total": 1249.95,
-    "line_items": [
-        {"description": "Laptop Computer", "qty": 1, "unit_price": 1099.99, "amount": 1099.99},
-        {"description": "Wireless Mouse", "qty": 5, "unit_price": 29.99, "amount": 149.95}
-    ]
-}
-```
+### Generator (adversarial)
+| Outcome | Reward |
+|---------|--------|
+| Evades both Auditor and Approver | 0.85 |
+| Evades Auditor, Approver catches | 0.60 |
+| Auditor catches it | 0.10 |
 
-**Medium:**
-```json
-{
-    "invoices": [
-        {"vendor": "...", "date": "YYYY-MM-DD", "currency": "USD", "total": 0.0, "line_items": [...]}
-    ]
-}
-```
-
-**Hard:**
-```json
-{
-    "invoices": [...],
-    "discrepancies": [
-        {"invoice_idx": 0, "type": "overcharge", "item_description": "Laptop Computer", "detail": "Invoice price 1199.99 vs PO price 1099.99"}
-    ]
-}
-```
-
----
-
-## Reward Function
-
-Rewards are provided at **every step** (not just terminal), giving agents a rich training signal.
-
-### Easy Task Scoring (0.0–1.0)
-
-| Component | Weight | Condition |
-|-----------|--------|-----------|
-| Vendor name | 0.15 | Exact match (case-insensitive) |
-| Date | 0.10 | Exact match (YYYY-MM-DD) |
-| Currency | 0.05 | Exact match (3-letter code) |
-| Total | 0.20 | Within ±0.01 |
-| Line items | 0.50 | Per-item matching on description, qty, unit_price, amount |
-
-### Medium Task Scoring
-
-Average of per-invoice scores using the Easy grading rubric across the full batch.
-
-### Hard Task Scoring
-
-| Component | Weight |
-|-----------|--------|
-| Extraction + Cleaning | 60% (same as Medium grading) |
-| Discrepancy Detection | 40% (precision + recall of flagged discrepancies) |
-
-### Attempt Penalty
-
-If all 5 attempts are exhausted without reaching 95% score, a **0.85× multiplier** is applied to the final reward.
-
----
-
-## Setup and Usage
-
-### Local Development
-
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd invoice_processing_pipeline
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the server
-uvicorn server.app:app --host 0.0.0.0 --port 7860 --reload
-
-# Test with curl
-curl http://localhost:7860/health
-curl -X POST http://localhost:7860/reset -H "Content-Type: application/json" -d '{"task_id": "easy"}'
-```
-
-### Docker
-
-```bash
-docker build -t invoice-env .
-docker run -p 7860:7860 invoice-env
-```
-
-### Running the Baseline
-
-```bash
-export HF_TOKEN=your_token_here
-export API_BASE_URL=https://router.huggingface.co/v1
-export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
-export ENV_URL=http://localhost:7860
-
-python inference.py
-```
-
-### Python Client
-
-```python
-from client import InvoiceEnvClient
-
-with InvoiceEnvClient("http://localhost:7860") as env:
-    result = env.reset(task_id="easy")
-    print(result["observation"]["raw_text"])
-
-    result = env.step({
-        "vendor": "Acme Corp",
-        "date": "2024-06-15",
-        "currency": "USD",
-        "total": 1249.95,
-        "line_items": [...]
-    })
-    print(f"Score: {result['reward']}")
-    print(f"Feedback: {result['observation']['feedback']}")
-```
+### Regulator
+Precision (0.35) + Recall (0.35) + No over-flagging (0.15) + Early warning bonus (0.15)
 
 ---
 
 ## API Endpoints
 
+### Core OpenEnv
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/reset` | POST | Start a new episode (`{"task_id": "easy\|medium\|hard"}`) |
-| `/step` | POST | Submit extracted data, get reward + feedback |
-| `/state` | GET | Get current episode metadata |
-| `/tasks` | GET | List all tasks with schemas |
-| `/grader` | POST | Score a submission without modifying state |
-| `/health` | GET | Health check |
-| `/docs` | GET | Swagger API docs |
+| `/reset` | POST | Start episode (`{"task_id": "easy\|medium\|hard\|expert\|adversarial\|negotiate\|supply_chain"}`) |
+| `/step`  | POST | Submit extracted data, get reward + feedback |
+| `/grader`| POST | Score without modifying state |
+| `/state` | GET  | Episode metadata |
+| `/health`| GET  | Health check |
+| `/ws`    | WS   | WebSocket interface |
+
+### Multi-Agent
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/multi/reset`   | POST | Start 5-agent episode, Generator biased by Regulator |
+| `/multi/extract` | POST | Score Extractor output (4 signals) |
+| `/multi/audit`   | POST | Score Auditor output, update tracker |
+| `/multi/approve` | POST | Run Approver, compute Generator reward |
+
+### Regulator
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/regulator/report`      | GET  | Detection rates, blind spots, weights |
+| `/regulator/forecast`    | GET  | Predictive trend analysis |
+| `/regulator/calibration` | GET  | Confidence calibration per fraud type |
+| `/regulator/predict`     | POST | Score Regulator blind spot predictions |
 
 ---
 
-## Baseline Scores
+## Quick Start
 
-| Agent | Easy | Medium | Hard | Average |
-|-------|------|--------|------|---------|
-| Oracle (ground truth) | 1.00 | 1.00 | 1.00 | 1.00 |
-| Qwen2.5-72B-Instruct | ~0.90 | ~0.65 | ~0.45 | ~0.67 |
-| Random (empty JSON) | 0.00 | 0.00 | 0.00 | 0.00 |
+```bash
+# Health check
+curl https://ps2181-invoice-processing-pipeline.hf.space/health
 
-*Scores are approximate and may vary due to random invoice generation.*
+# Start an episode
+curl -X POST https://ps2181-invoice-processing-pipeline.hf.space/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id": "easy"}'
+
+# Start a multi-agent episode
+curl -X POST https://ps2181-invoice-processing-pipeline.hf.space/multi/reset
+
+# Get Regulator report
+curl https://ps2181-invoice-processing-pipeline.hf.space/regulator/report
+```
 
 ---
 
-## Design Decisions
+## Fraud Types
 
-- **Synthetic data generation**: Every episode creates fresh invoices, preventing memorisation and ensuring reproducibility via random seeds.
-- **Partial credit at every step**: The grader scores each component independently (vendor, date, line items, etc.), giving agents fine-grained reward signal.
-- **Progressive difficulty**: Easy tests pure extraction, Medium adds data quality issues, Hard adds cross-document reasoning.
-- **Realistic noise**: Vendor typos, date format variations, and currency symbol mixing are modelled after actual OCR and data entry errors.
-- **Attempt-based penalty**: Encourages agents to get it right early rather than brute-forcing over many attempts.
+| Type | Description |
+|------|-------------|
+| `phantom_vendor` | Vendor not in the Approved Vendor Registry |
+| `price_gouging` | Unit price > 150% of market max |
+| `math_fraud` | Invoice total ≠ sum of line items |
+| `duplicate_submission` | Same invoice_id or vendor+date+total already seen |
+| `compound_fraud` | Two fraud signals in one invoice |
 
 ---
 
 ## Links
 
-- OpenEnv GitHub: https://github.com/meta-pytorch/OpenEnv
-- Hugging Face Environment Hub: https://huggingface.co/openenv
+- **Live Demo**: [ps2181-invoice-processing-pipeline.hf.space/web](https://ps2181-invoice-processing-pipeline.hf.space/web)
+- **API Docs**: [ps2181-invoice-processing-pipeline.hf.space/docs](https://ps2181-invoice-processing-pipeline.hf.space/docs)
+- **GitHub**: [github.com/ps2181/invoice-processing-pipeline](https://github.com/ps2181/invoice-processing-pipeline)
+- **OpenEnv**: [github.com/meta-pytorch/OpenEnv](https://github.com/meta-pytorch/OpenEnv)
