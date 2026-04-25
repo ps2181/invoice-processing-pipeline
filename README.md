@@ -1,22 +1,6 @@
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-.card{background:#fff;border:0.5px solid #ddd;border-radius:12px;overflow:hidden;font-family:monospace;font-size:13px}
-.card-header{background:#E6F1FB;border-bottom:0.5px solid #B5D4F4;padding:14px 18px;display:flex;align-items:center;gap:10px}
-.card-header-dot{width:8px;height:8px;border-radius:50%;background:#378ADD}
-.card-header-title{font-family:sans-serif;font-size:11px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;color:#0C447C}
-.yaml-line{display:flex;align-items:baseline;padding:6px 18px;border-bottom:0.5px solid #eee}
-.yaml-line:nth-child(even){background:#f8fafd}
-.yaml-key{color:#185FA5;font-weight:500;min-width:120px}
-.yaml-sep{color:#378ADD;margin:0 4px}
-.yaml-val{color:#0C447C}
-.yaml-val.str{color:#0F6E56}
-.yaml-val.num{color:#854F0B}
-.tag-bullet{color:#378ADD;margin:0 6px 0 139px}
-.tag-val{color:#0F6E56}
-.card-footer{background:#E6F1FB;border-top:0.5px solid #B5D4F4;padding:10px 18px;display:flex;gap:6px;flex-wrap:wrap}
-.badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:4px;font-size:11px;font-weight:500;font-family:sans-serif;background:#B5D4F4;color:#0C447C;border:0.5px solid #85B7EB}
-.badge.sdk{background:#0C447C;color:#E6F1FB}
-</style>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/metadata-card.svg" alt="Space metadata" />
+</p>
 
 <div class="card">
   <div class="card-header">
