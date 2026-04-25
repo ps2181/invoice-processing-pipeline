@@ -321,6 +321,7 @@ class MultiAuditRequest(BaseModel):
 
 class RegulatorPredictRequest(BaseModel):
     predicted_blind_spots: list
+    predicted_emerging: Optional[list] = None
 
 
 @app.post("/multi/reset")
@@ -389,15 +390,32 @@ def regulator_report():
 
 @app.post("/regulator/predict")
 def regulator_predict(req: RegulatorPredictRequest):
-    """Score a Regulator agent's blind spot predictions against actual tracker state."""
+    """Score a Regulator agent's blind spot predictions against actual tracker state.
+    Optional: predicted_emerging for Option A early-warning bonus."""
     actual = _regulator_tracker.blind_spots()
-    reward, feedback = compute_regulator_reward(req.predicted_blind_spots, actual)
+    reward, feedback = compute_regulator_reward(
+        req.predicted_blind_spots, actual, req.predicted_emerging
+    )
     return {
         "reward": reward,
         "feedback": feedback,
         "actual_blind_spots": actual,
+        "actual_emerging": [e["fraud_type"] for e in _regulator_tracker.emerging_blind_spots()],
         "predicted_blind_spots": req.predicted_blind_spots,
+        "predicted_emerging": req.predicted_emerging,
     }
+
+
+@app.get("/regulator/forecast")
+def regulator_forecast():
+    """Option A: Predictive Regulator — trend analysis + emerging blind spot warnings."""
+    return _regulator_tracker.forecast()
+
+
+@app.get("/regulator/calibration")
+def regulator_calibration():
+    """Option C: Auditor confidence calibration report — detects overconfident misses."""
+    return _regulator_tracker.calibration_report()
 
 
 @app.post("/regulator/demo_seed")

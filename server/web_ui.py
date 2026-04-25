@@ -103,27 +103,56 @@ PLACEHOLDER_JSON = "// Reset an episode first, then paste or generate JSON here.
 
 def _get_regulator_report() -> str:
     data = _get("/regulator/report")
+    forecast = _get("/regulator/forecast")
+    calibration = _get("/regulator/calibration")
     if "error" in data:
         return f"Error: {data['error']}"
+
     lines = [
         f"Total audits recorded: {data.get('total_audits_recorded', 0)}  (window={data.get('window', 30)})",
         "",
-        "FRAUD TYPE DETECTION RATES",
-        "─" * 40,
+        "DETECTION RATES  (trend: ↑ improving  ↓ declining)",
+        "─" * 50,
     ]
     for ft, status in data.get("detection_rates", {}).items():
-        lines.append(f"  {ft:<28} {status}")
+        lines.append(f"  {ft:<30} {status}")
+
     lines += [
         "",
         f"False Positive Rate: {data.get('false_positive_rate', 'no data')}",
         "",
-        f"BLIND SPOTS: {data.get('blind_spots', [])}",
+        f"CRITICAL BLIND SPOTS:  {data.get('blind_spots', [])}",
+        f"EMERGING BLIND SPOTS:  {data.get('emerging_blind_spots', [])}",
         "",
-        "GENERATOR WEIGHTS (next episode)",
-        "─" * 40,
+        "PREDICTIVE FORECAST",
+        "─" * 50,
+    ]
+    if "error" not in forecast:
+        for ft, trend in forecast.get("trends", {}).items():
+            lines.append(f"  {ft:<30} {trend}")
+        lines.append(f"\n  {forecast.get('recommendation', '')}")
+
+    lines += [
+        "",
+        "CONFIDENCE CALIBRATION  (overconfident misses = dangerous)",
+        "─" * 50,
+    ]
+    if "error" not in calibration:
+        for ft, cal in calibration.items():
+            if isinstance(cal, dict) and cal.get("status") != "no data":
+                lines.append(f"  {ft:<30} {cal.get('status','')}")
+                if cal.get("mean_confidence_when_wrong") is not None:
+                    lines.append(f"    conf on wrong={cal['mean_confidence_when_wrong']:.2f}  conf on correct={cal.get('mean_confidence_when_correct', 'N/A')}")
+
+    lines += [
+        "",
+        "GENERATOR WEIGHTS (next episode bias)",
+        "─" * 50,
     ]
     for ft, w in data.get("generator_weights", {}).items():
-        lines.append(f"  {ft:<28} {w:.3f}")
+        bar = "█" * int(w * 30)
+        lines.append(f"  {ft:<30} {w:.3f}  {bar}")
+
     lines += ["", f"VERDICT: {data.get('verdict', '')}"]
     return "\n".join(lines)
 
@@ -132,7 +161,7 @@ def _seed_demo_data() -> str:
     data = _post("/regulator/demo_seed", {})
     if "error" in data:
         return f"Error: {data['error']}"
-    return "✅ Demo data seeded — phantom_vendor at ~31% (blind spot)\n\n" + _get_regulator_report()
+    return "✅ Demo data seeded — phantom_vendor at ~32% (blind spot), duplicate_submission declining (emerging)\n\n" + _get_regulator_report()
 
 
 def build_ui() -> gr.Blocks:
