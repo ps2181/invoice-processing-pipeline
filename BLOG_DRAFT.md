@@ -6,8 +6,6 @@
 **and automatically gets harder when it finds its own blind spots.**
 
 <br/>
-<br/>
-
 *Meta PyTorch OpenEnv Hackathon · Grand Finale · April 25–26, 2026*  
 *Pritam Satpathy & Gnana Nawin T · Scaler School of Technology, Bangalore*
 
@@ -39,18 +37,10 @@ We added a **cross-episode Regulator** — an agent that watches the Auditor acr
 
 No human decides *"let's train more on phantom vendors."* The Regulator notices the detection rate for phantom vendors is at `31%` and trending downward, raises the alarm, and tells the Generator to send more phantom vendor invoices. **The loop closes itself.**
 
-```
-Generator ──────────────────────────► Extractor ──► (4 reward signals)
-    ▲                                                         │
-    │  bias weights                              invoice JSON │
-    │  (from blind spots)                                     ▼
-Regulator ◄──────── detection rates ──────────────── Auditor
-    │                                                         │
-    │  blind spot report                   verdict + conf.    │
-    └──────────────────────────────────────►                  ▼
-                                                          Approver
-                                               (approve / escalate / reject)
-```
+<div align="center">
+<img width="1710" height="326" alt="image" src="https://github.com/user-attachments/assets/319654c3-aa24-47e8-9716-734d4e902168" />
+</div>
+
 
 The Auditor sees more of exactly what it's failing on. The Generator gets rewarded for finding those gaps. The Regulator earns points for predicting blind spots *before* they go critical. Every agent has skin in the game.
 
@@ -62,11 +52,11 @@ The Auditor sees more of exactly what it's failing on. The Generator gets reward
 
 | Agent | Role | Reward Signal |
 |:---:|:---|:---|
-| 🏭 **Generator** | Creates clean or fraudulent invoices, biased by Regulator's blind-spot weights | `+0.85` evades both · `+0.60` evades Auditor · `+0.10` caught |
-| 🔍 **Extractor** | Raw invoice text → structured JSON | format `0.10` · field accuracy `0.40` · math `0.25` · completeness `0.25` |
-| 🕵️ **Auditor** | Fraud classification with fraud type + confidence score | `+0.99` correct type · `+0.90` clean cleared · `+0.01` miss or FP |
-| ✅ **Approver** | Final approve / escalate / reject, gated by confidence | `≥0.80` → reject · `0.50–0.80` → escalate · `<0.50` → approve |
-| 🧠 **Regulator** | Cross-episode meta-agent, 30-episode rolling window | precision `0.35` + recall `0.35` + no over-flagging `0.15` + early warning `0.15` |
+| **Generator** | Creates clean or fraudulent invoices, biased by Regulator's blind-spot weights | `+0.85` evades both · `+0.60` evades Auditor · `+0.10` caught |
+| **Extractor** | Raw invoice text → structured JSON | format `0.10` · field accuracy `0.40` · math `0.25` · completeness `0.25` |
+| **Auditor** | Fraud classification with fraud type + confidence score | `+0.99` correct type · `+0.90` clean cleared · `+0.01` miss or FP |
+| **Approver** | Final approve / escalate / reject, gated by confidence | `≥0.80` → reject · `0.50–0.80` → escalate · `<0.50` → approve |
+| **Regulator** | Cross-episode meta-agent, 30-episode rolling window | precision `0.35` + recall `0.35` + no over-flagging `0.15` + early warning `0.15` |
 
 </div>
 
@@ -80,13 +70,13 @@ The **Regulator** is the part that makes this genuinely different. Most RL envir
 
 | # | Task | What the Agent Faces | Difficulty |
 |:---:|:---|:---|:---:|
-| 1 | `easy` | Single clean invoice — extract 5 fields | 🟢 Easy |
-| 2 | `medium` | Batch with date chaos, vendor typos, currency noise | 🟡 Medium |
-| 3 | `hard` | Extraction + PO reconciliation — flag overcharges, missing items | 🟠 Hard |
-| 4 | `expert` | Full fraud audit across all four fraud types | 🔴 Expert |
-| 5 | `adversarial` | OCR corruption, SUBTOTAL traps, fake TAX/FX noise lines | 🔴 Expert |
-| 6 | `negotiate` | Ask clarifying questions first (bonus for ≤2), then extract | 🟡 Medium |
-| 7 | `supply_chain` | Detect quantity shortfalls, price spikes, phantom deliveries | 🔴 Expert |
+| 1 | `easy` | Single clean invoice — extract 5 fields | Easy |
+| 2 | `medium` | Batch with date chaos, vendor typos, currency noise | Medium |
+| 3 | `hard` | Extraction + PO reconciliation — flag overcharges, missing items | Hard |
+| 4 | `expert` | Full fraud audit across all four fraud types | Expert |
+| 5 | `adversarial` | OCR corruption, SUBTOTAL traps, fake TAX/FX noise lines | Expert |
+| 6 | `negotiate` | Ask clarifying questions first (bonus for ≤2), then extract | Medium |
+| 7 | `supply_chain` | Detect quantity shortfalls, price spikes, phantom deliveries | Expert |
 
 </div>
 
@@ -101,9 +91,9 @@ This was the most interesting moment in the project.
 At training step 10, we had:
 
 ```
-math_consistency:   0.97  ✅
-completeness:       1.00  ✅
-field_accuracy:     0.00  ❌  ← hallucinating every actual value
+math_consistency:   0.97  
+completeness:       1.00  
+field_accuracy:     0.00  :(  ← hallucinating every actual value
 ```
 
 The model had figured out that it could score well by outputting JSON that was *arithmetically correct* — quantities times unit prices summed to the totals perfectly — while **hallucinating every actual value**. Vendor name: made up. Date: made up. Currency: made up. All internally consistent. All completely wrong.
@@ -143,7 +133,7 @@ reward_completeness(extracted, gt)   # weight 0.25 — all expected line items p
 # All clamped to (0.01, 0.99) — no log(0), no gradient collapse at boundaries
 ```
 
-### 🕵️ Auditor — Precision-Weighted
+### Auditor — Precision-Weighted
 
 <div align="center">
 
@@ -157,7 +147,7 @@ reward_completeness(extracted, gt)   # weight 0.25 — all expected line items p
 
 </div>
 
-### 🧠 Regulator — Cross-Episode
+### Regulator — Cross-Episode
 
 ```
 Total = Precision(0.35) + Recall(0.35) + No-over-flagging(0.15) + Early-warning-bonus(0.15)
@@ -212,14 +202,14 @@ Colab → /reset  (fresh synthetic invoice from live environment)
 
 | Resource | Link |
 |:---|:---|
-| 🚀 **Live Environment** | [ps2181-invoice-processing-pipeline.hf.space](https://ps2181-invoice-processing-pipeline.hf.space) |
-| 🖥️ **Gradio Demo UI** | [/web](https://ps2181-invoice-processing-pipeline.hf.space/web) |
-| 📖 **API Docs** | [/docs](https://ps2181-invoice-processing-pipeline.hf.space/docs) |
-| 📓 **Training Colab** | [Open notebook](https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB) |
-| 💻 **GitHub** | [invoice-processing-pipeline](https://github.com/ps2181/invoice-processing-pipeline) |
-| 🤗 **Extractor Model** | [ps2181/extractor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b) |
-| 🕵️ **Auditor Model** | [ps2181/auditor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b) |
-| 🏭 **Generator Model** | [ps2181/generator-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b) |
+| **Live Environment** | [ps2181-invoice-processing-pipeline.hf.space](https://ps2181-invoice-processing-pipeline.hf.space) |
+| **Gradio Demo UI** | [/web](https://ps2181-invoice-processing-pipeline.hf.space/web) |
+| **API Docs** | [/docs](https://ps2181-invoice-processing-pipeline.hf.space/docs) |
+| **Training Colab** | [Open notebook](https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB) |
+| **GitHub** | [invoice-processing-pipeline](https://github.com/ps2181/invoice-processing-pipeline) |
+| **Extractor Model** | [ps2181/extractor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b) |
+| **Auditor Model** | [ps2181/auditor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b) |
+| **Generator Model** | [ps2181/generator-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b) |
 
 </div>
 
