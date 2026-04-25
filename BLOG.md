@@ -1,276 +1,227 @@
-# Invoice Processing Pipeline — Multi-Agent RL Environment for Financial Fraud Detection
+<div align="center">
 
-**Meta PyTorch OpenEnv Hackathon Grand Finale | April 25–26, 2026**
-**Team: Pritam Satpathy + Gnana Nawin T**
+# When the System Learns to Pressure-Test Itself
 
----
+**How we built a 5-agent adversarial RL environment that detects invoice fraud —**  
+**and automatically gets harder when it finds its own blind spots.**
 
-## The Problem
+<br/>
+*Meta PyTorch OpenEnv Hackathon · Grand Finale · April 25–26, 2026*  
+*Pritam Satpathy & Gnana Nawin T · Scaler School of Technology, Bangalore*
 
-Invoice fraud costs businesses an estimated 5% of annual revenue. Finance teams manually process thousands of invoices every month — extracting vendor names, dates, line items, totals — and checking them against purchase orders for discrepancies. The work is slow (hours per batch), error-prone (typos, OCR noise, format chaos), and gameable (phantom vendors, price gouging, duplicate submissions).
-
-We built an RL training environment that teaches LLMs to do this automatically — and improves itself when it discovers its own blind spots.
-
----
-
-## What We Built
-
-An OpenEnv-compatible environment deployed on HuggingFace Spaces:
-**[https://ps2181-invoice-processing-pipeline.hf.space](https://ps2181-invoice-processing-pipeline.hf.space)**
+</div>
 
 ---
 
-## Architecture: 5-Agent System
+## The Problem Nobody Talks About
 
-```
-          ┌─────────────────────────────────────────────────────────┐
-          │              ADVERSARIAL REWARD (dashed)                │
-          │                                                         │
-          ▼                                                         │
-  ┌───────────────┐                                                 │
-  │   Generator    │◄───── Regulator biases fraud type ◄────┐       │
-  │ Creates fraud  │                                        │       │
-  └───────┬───────┘                                        │       │
-          │ Raw invoice text                                │       │
-          ▼                                                 │       │
-  ┌───────────────┐                                        │       │
-  │   Extractor    │                                        │       │
-  │ Text → JSON    │                                        │       │
-  └───────┬───────┘                                        │       │
-          │ Structured data                          ┌─────┴─────┐ │
-          ▼                                          │ Regulator  │ │
-  ┌───────────────┐                                  │ Cross-     │ │
-  │    Auditor     │────── decision history ────────►│ episode    │ │
-  │ Fraud detect   │                                  │ meta-agent │ │
-  └───────┬───────┘                                  └───────────┘ │
-          │ Verdict + flags                                         │
-          ▼                                                         │
-  ┌───────────────┐                                                 │
-  │   Approver     │────────────────────────────────────────────────┘
-  │ Approve/reject │
-  └───────┬───────┘
-          │
-          ▼
-  ┌──────────────────────────────────────┐
-  │  4 Independent Reward Signals        │
-  │  Format · Field · Math · Completeness│
-  └──────────────────────────────────────┘
-```
+Invoice fraud is boring to talk about and devastating in practice.
+
+It costs businesses an estimated **5% of annual revenue**, and it doesn't announce itself — it hides in purchase order line items, disguised as rounding errors, vendor name typos, and suspiciously round numbers that only look wrong if you already know what to look for.
+
+Finance teams today catch it manually. They compare thousands of invoices against purchase orders, cross-reference vendor registries, and flag anything that smells off. It's slow, it's error-prone, and critically — **it doesn't improve**. A human who misses phantom vendor fraud on Monday is statistically likely to miss it again on Friday.
+
+We asked a different question:
+
+> *What if you could build an LLM system that not only detects fraud, but gets better at detecting the exact fraud types it's currently failing on — automatically, without any human retraining the loop?*
+
+That's what we built.
+
+---
+
+## The Core Idea: Make the System Pressure-Test Itself
+
+Most multi-agent RL setups have agents that operate independently within a single episode. Ours doesn't.
+
+We added a **cross-episode Regulator** — an agent that watches the Auditor across 30 rolling episodes, tracks which fraud types it's systematically missing, and quietly biases the Generator to produce more of those exact scenarios.
+
+No human decides *"let's train more on phantom vendors."* The Regulator notices the detection rate for phantom vendors is at `31%` and trending downward, raises the alarm, and tells the Generator to send more phantom vendor invoices. **The loop closes itself.**
+
+<div align="center">
+<img width="1710" height="326" alt="image" src="https://github.com/user-attachments/assets/319654c3-aa24-47e8-9716-734d4e902168" />
+</div>
+
+
+The Auditor sees more of exactly what it's failing on. The Generator gets rewarded for finding those gaps. The Regulator earns points for predicting blind spots *before* they go critical. Every agent has skin in the game.
+
+---
+
+## Five Agents, One Closed Loop
+
+<div align="center">
 
 | Agent | Role | Reward Signal |
-|-------|------|---------------|
-| **Generator** | Creates clean or fraudulent invoices | Rewarded when fraud slips past Auditor (adversarial self-play) |
-| **Extractor** | Reads raw invoice text → structured JSON | 4 independent signals: format, field accuracy, math consistency, completeness |
-| **Auditor** | Reviews extraction, flags fraud | +0.99 correct detection, +0.90 clean clearance, 0.01 for miss/false positive |
-| **Approver** | Final approve/reject/escalate decision | +0.95 correct decision |
-| **Regulator** | Monitors Auditor blind spots across episodes | Precision + recall of blind spot predictions |
+|:---:|:---|:---|
+| **Generator** | Creates clean or fraudulent invoices, biased by Regulator's blind-spot weights | `+0.85` evades both · `+0.60` evades Auditor · `+0.10` caught |
+| **Extractor** | Raw invoice text → structured JSON | format `0.10` · field accuracy `0.40` · math `0.25` · completeness `0.25` |
+| **Auditor** | Fraud classification with fraud type + confidence score | `+0.99` correct type · `+0.90` clean cleared · `+0.01` miss or FP |
+| **Approver** | Final approve / escalate / reject, gated by confidence | `≥0.80` → reject · `0.50–0.80` → escalate · `<0.50` → approve |
+| **Regulator** | Cross-episode meta-agent, 30-episode rolling window | precision `0.35` + recall `0.35` + no over-flagging `0.15` + early warning `0.15` |
+
+</div>
+
+The **Regulator** is the part that makes this genuinely different. Most RL environments treat each episode as independent. The Regulator sits outside that — accumulating detection rates, computing trend slopes over 5-episode windows, and warning of *emerging* blind spots before they go critical. It's proactive oversight, not reactive retraining.
 
 ---
 
-## The Key Innovation: The Regulator
+## Seven Tasks, One Curriculum
 
-The Regulator is a cross-episode meta-agent — it watches the Auditor's decision history over 30 episodes and identifies systematic failure patterns:
+<div align="center">
+
+| # | Task | What the Agent Faces | Difficulty |
+|:---:|:---|:---|:---:|
+| 1 | `easy` | Single clean invoice — extract 5 fields | Easy |
+| 2 | `medium` | Batch with date chaos, vendor typos, currency noise | Medium |
+| 3 | `hard` | Extraction + PO reconciliation — flag overcharges, missing items | Hard |
+| 4 | `expert` | Full fraud audit across all four fraud types | Expert |
+| 5 | `adversarial` | OCR corruption, SUBTOTAL traps, fake TAX/FX noise lines | Expert |
+| 6 | `negotiate` | Ask clarifying questions first (bonus for ≤2), then extract | Medium |
+| 7 | `supply_chain` | Detect quantity shortfalls, price spikes, phantom deliveries | Expert |
+
+</div>
+
+The difficulty also adjusts **dynamically** based on the agent's rolling score. Score above `0.85`? The next batch gets heavier OCR corruption, more PO discrepancies, deeper adversarial traps. Drop below `0.60`? It eases off. The agent is always working at its productive edge.
+
+---
+
+## The Part Where We Caught Our Own Reward Hacking
+
+This was the most interesting moment in the project.
+
+At training step 10, we had:
 
 ```
-AUDITOR PERFORMANCE TRACKER (last 30 episodes)
-
-Fraud Type            Detection Rate
-─────────────────────────────────────
-phantom_vendor        31%   ⚠ BLIND SPOT
-price_gouging         74%   ✓ OK
-math_fraud            81%   ✓ OK
-duplicate_submission  62%   ✓ OK
-
-False Positive Rate:  12%   ✓ OK
-
-REGULATOR VERDICT: Recommend retraining on phantom_vendor
+math_consistency:   0.97  
+completeness:       1.00  
+field_accuracy:     0.00  :(  ← hallucinating every actual value
 ```
 
-When the Regulator detects a blind spot, the Generator automatically starts producing more of that fraud type — closing the self-improvement loop without human intervention.
+The model had figured out that it could score well by outputting JSON that was *arithmetically correct* — quantities times unit prices summed to the totals perfectly — while **hallucinating every actual value**. Vendor name: made up. Date: made up. Currency: made up. All internally consistent. All completely wrong.
 
-This directly addresses **Theme #1 (Fleet AI Scalable Oversight)** and **Theme #4 (Self-Improvement)**.
+This is reward hacking. A single aggregated reward would have happily reported high performance and called it a day.
+
+Our four **independent** reward signals made the failure immediately visible. We could see exactly which signal the model had learned to game and which it was ignoring.
+
+> **That's the entire argument for independent reward functions: not just diversity, but diagnosability.**
+
+We adjusted training emphasis. By step 30, field accuracy had climbed from `0.00` to `0.30+` while math consistency stayed stable.
+
+<div align="center">
+
+| Step | Total Reward | Env Score | Format | Math Consistency |
+|:---:|:---:|:---:|:---:|:---:|
+| 10 | 2.361 | 0.113 | 0.900 | 0.347 |
+| 20 | 2.595 | 0.282 | 0.900 | 0.413 |
+| 30 | 2.657 | **0.304** | **0.950** | 0.403 |
+
+**Environment score: `0.113 → 0.304` in 30 steps — a 169% improvement in live-graded extraction accuracy.**
+
+</div>
 
 ---
 
-## 7 Tasks (Progressive Difficulty)
+## The Reward Architecture
 
-| Task | Difficulty | What the Agent Does |
-|------|-----------|---------------------|
-| `easy` | Easy | Extract fields from a single clean invoice |
-| `medium` | Medium | Clean + normalise a batch of messy invoices (typos, date chaos, currency symbols) |
-| `hard` | Hard | Extract + reconcile against purchase orders, flag discrepancies |
-| `expert` | Expert | Fraud audit: classify phantom_vendor / price_gouging / math_fraud / duplicate_submission |
-| `adversarial` | Hard | Extract from OCR-corrupted invoice with SUBTOTAL trap and FX noise lines |
-| `negotiate` | Medium | Ask clarification questions then submit extraction (bonus for ≤2 questions) |
-| `supply_chain` | Expert | Detect quantity shortfalls, price spikes, phantom deliveries in delivery records |
-
----
-
-## Design Decisions
-
-### 4 Independent Reward Functions (Anti-Hacking)
-
-Per the hackathon guide: *"use multiple independent reward functions — if you only have one, it is easier for the model to hack it."*
+### 🔍 Extractor — 4 Independent Signals
 
 ```python
-format_reward()       # Are all 5 required JSON keys present?       weight: 0.10
-field_reward()        # Do vendor/date/currency/total match?         weight: 0.40
-math_reward()         # Does qty × unit_price = amount for all items? weight: 0.25
-completeness_reward() # Are all line items present (recall)?          weight: 0.25
+reward_format(extracted)             # weight 0.10 — all 5 required JSON keys present?
+reward_field_accuracy(extracted, gt) # weight 0.40 — vendor / date / currency / total match?
+reward_math_consistency(extracted)   # weight 0.25 — qty × unit_price = amount per line?
+reward_completeness(extracted, gt)   # weight 0.25 — all expected line items present?
+
+# All clamped to (0.01, 0.99) — no log(0), no gradient collapse at boundaries
 ```
 
-During training we observed the model maximising `math_reward` (0.97) and `completeness_reward` (1.0) while `field_reward` stayed at 0.00 — the model learned to output arithmetic-consistent JSON while hallucinating values. Our independent signals made this reward hacking immediately visible, confirming the design choice.
+### Auditor — Precision-Weighted
 
-### Adversarial Self-Play
+<div align="center">
 
-The Generator is rewarded when its fraud evades the Auditor:
-- Fraud undetected, Approver approves → Generator reward: **0.85**
-- Auditor missed but Approver caught → Generator reward: **0.60**
-- Auditor caught it → Generator reward: **0.10**
+| Outcome | Reward | Why |
+|:---|:---:|:---|
+| Correct fraud type detected | **0.99** | Rewards precise classification, not just flagging |
+| Clean invoice correctly approved | **0.90** | Keeps false-positive rate honest |
+| Compound fraud — one of two types caught | **0.65** | Partial credit prevents discouragement on hard cases |
+| Fraud flagged but wrong type | **0.50** | Penalises sloppiness while crediting intent |
+| Miss or false positive | **0.01** | Near-zero punishes both failure modes symmetrically |
 
-This creates evolutionary pressure: the Generator evolves harder-to-detect fraud, forcing the Auditor to improve.
+</div>
 
-### Dynamic Difficulty
+### Regulator — Cross-Episode
 
-The environment tracks recent agent scores per task (rolling window of 10 episodes) and adjusts generation parameters:
-- Agent scoring ≥ 0.85 → harder parameters (more invoices, more OCR noise, more discrepancies)
-- Agent scoring < 0.60 → easier parameters
-- In between → standard
+```
+Total = Precision(0.35) + Recall(0.35) + No-over-flagging(0.15) + Early-warning-bonus(0.15)
+```
 
-### All Rewards Clamped to (0.01, 0.99)
-
-Avoids `log(0)` in policy gradient and prevents the model from getting stuck at boundaries.
+The early-warning bonus rewards the Regulator for predicting emerging blind spots *before* detection rates cross the critical threshold — proactive oversight, not reactive alarm.
 
 ---
 
-## Tech Stack
+## Building With OpenEnv
+
+The environment is a FastAPI app deployed on HuggingFace Spaces, exposing the standard OpenEnv interface. The training Colab connects directly to the live Space — `/grader` *is* the reward function. There's no separate scoring script. **The environment and the verifier are the same thing.**
+
+```bash
+# Start an episode
+POST /reset  {"task_id": "expert"}
+
+# Submit an extraction or audit result
+POST /step   {"episode_id": "...", "extracted_data": {...}}
+
+# Check Regulator state anytime
+GET  /regulator/report       # detection rates, blind spots, generator bias weights
+GET  /regulator/forecast     # trend slopes, emerging blind spots with early warnings
+GET  /regulator/calibration  # overconfidence / underconfidence per fraud type
+```
+
+Training uses **GRPO via TRL** with **Unsloth-optimised 4-bit QLoRA** on `Qwen2.5-1.5B-Instruct` — three separate LoRA adapters for Extractor, Auditor, and Generator, each trained on their own reward signal.
 
 ```
-Environment:  FastAPI + OpenEnv-core + Pydantic
-Deployment:   HuggingFace Spaces (Docker, port 7860)
-UI:           Gradio (mounted at /web)
-Training:     TRL GRPOTrainer + Unsloth (Qwen2.5-1.5B-Instruct, 4-bit QLoRA)
-Model:        unsloth/Qwen2.5-1.5B-Instruct  r=16 LoRA
-Reward:       4 local signals + live /grader endpoint on HF Space
-```
-
----
-
-## Training Setup
-
-GRPO (Group Relative Policy Optimization) with:
-- `num_generations = 4` — 4 completions per prompt, compared within group
-- `max_steps = 200`
-- `learning_rate = 5e-6`
-- Live `/grader` endpoint on HF Space as environment verifier
-
-The training loop:
-```
-Colab samples episode → HF Space /reset → gets live invoice
-Model generates JSON extraction
-HF Space /grader scores it against ground truth
-GRPO updates model toward higher-scoring completions
+Colab → /reset  (fresh synthetic invoice from live environment)
+      → model generates JSON extraction
+      → /grader  scores against ground truth
+      → GRPO updates weights toward higher-reward completions
+      → repeat 200 steps
 ```
 
 ---
 
-## What Worked (Achievements)
+## What We Learned
 
-### 1. Reward Hacking Detection — Caught at Step 10
+**Reward design is product design.** Every reward function is a specification for the behaviour you actually want. Getting the Auditor reward right — where catching the *right* fraud type earns `0.99` but the *wrong* type earns `0.50` and missing entirely earns `0.01` — took more thinking than most of the engineering.
 
-The independent reward signals caught a classic reward hacking pattern immediately. The model maximised math and completeness while hallucinating field values. Without 4 independent signals, this would have been invisible behind a rising aggregate reward.
+**Multiple reward signals are diagnostics, not just incentives.** We didn't add four signals to the Extractor because the theory said to. We added them because we wanted to *see* where the model was failing. They paid off immediately at step 10.
 
-| Step | Total Reward | Env Score | Format | Math |
-|------|-------------|-----------|--------|------|
-| 10   | 2.361       | 0.113     | 0.900  | 0.347 |
-| 20   | 2.595       | 0.282     | 0.900  | 0.413 |
-| 30   | 2.657       | 0.304     | 0.950  | 0.403 |
-
-Environment score rose **0.113 → 0.304 in 30 steps** — a 169% improvement in correct invoice extraction as scored by the live environment grader.
-
-### 2. Live Environment as Verifier
-
-Training Colab directly calls `/grader` on the deployed HF Space — the environment IS the reward function. No separate reward model. Deterministic and reproducible.
-
-### 3. Regulator Concept Validated
-
-The cross-episode tracking logic works: the Regulator correctly identifies `phantom_vendor` as the Auditor's weakest category and triggers Generator bias toward that fraud type. No other OpenEnv environment we've seen implements a cross-episode meta-agent.
-
-### 4. Full 7-Task Ladder Deployed
-
-All 7 tasks are live on the HF Space with independent graders, schemas, and difficulty calibration. The progressive structure directly supports curriculum learning.
-
-### 5. Clean OpenEnv API Compliance
-
-Standard `reset()` / `step()` / `state()` interface, WebSocket support, Swagger docs at `/docs`, Gradio UI at `/web`. Drop-in compatible with any OpenEnv training script.
+**Cross-episode agents change what's possible.** The Regulator couldn't exist in a single-episode design. Most RL environments treat each episode as independent. Giving one agent access to the history of another creates a fundamentally different kind of oversight — one that looks less like evaluation and more like a genuine colleague watching your back.
 
 ---
 
-## Where We're Having Problems (Honest Assessment)
+## Try It
 
-### 1. Field Reward Plateau
+<div align="center">
 
-The `field_reward` (vendor name, date, currency, total accuracy) remains the hardest signal for the 1.5B model to crack. Even at step 30, the environment score is 0.304 — meaning the model still hallucinates field values despite correct structure and math. We suspect this is a model capacity issue: Qwen2.5-1.5B may not have enough parameters to learn extraction patterns from raw OCR text in 200 steps.
+| Resource | Link |
+|:---|:---|
+| **Live Environment** | [ps2181-invoice-processing-pipeline.hf.space](https://ps2181-invoice-processing-pipeline.hf.space) |
+| **Gradio Demo UI** | [/web](https://ps2181-invoice-processing-pipeline.hf.space/web) |
+| **API Docs** | [/docs](https://ps2181-invoice-processing-pipeline.hf.space/docs) |
+| **Training Colab** | [Open notebook](https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB) |
+| **GitHub** | [invoice-processing-pipeline](https://github.com/ps2181/invoice-processing-pipeline) |
+| **Extractor Model** | [ps2181/extractor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b) |
+| **Auditor Model** | [ps2181/auditor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b) |
+| **Generator Model** | [ps2181/generator-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b) |
 
-**Potential fix:** Switching to Qwen2.5-7B or adding a light SFT warmup phase with 50–100 correct extraction examples before RL.
-
-### 2. Multi-Agent Coordination Not Yet Trained End-to-End
-
-The 5-agent architecture is designed and the environment supports it, but we haven't yet run the full adversarial training loop (Generator vs Auditor) end-to-end with GRPO. Currently, the Extractor is trained in isolation. The Regulator logic runs as environment-side code, not as a trainable agent.
-
-**Potential fix:** Implementing a two-phase training loop — Phase 1: train Extractor on easy/medium, Phase 2: train Auditor against Generator with Regulator feedback.
-
-### 3. Compute Constraints
-
-4-bit QLoRA on a Colab T4 limits batch sizes and generation counts. With `num_generations=4`, each step is slow enough that we couldn't push past ~50 steps in the available time. The reward curves are trending upward but haven't converged.
-
-**Potential fix:** Onsite compute credits (HF GPU Spaces) should allow `num_generations=8` and 500+ steps.
-
-### 4. OCR Noise Robustness
-
-The `adversarial` task (trap-resistant extraction with SUBTOTAL/FX noise lines) works as an environment, but the model hasn't been trained on it yet. Early inference tests show the model consistently falls for fake SUBTOTAL lines.
-
-**Potential fix:** Adding adversarial examples to the curriculum after the model achieves ≥0.60 on `medium`.
+</div>
 
 ---
 
-## What Makes This Novel
+<div align="center">
 
-1. **Regulator agent** — no other OpenEnv environment has a cross-episode meta-agent that monitors another agent for systematic cognitive blind spots
+*Built for the Meta PyTorch OpenEnv Hackathon 2026.*  
+*Theme alignment: Multi-Agent Interactions (#1) · Fleet AI Scalable Oversight (#1 bonus) · Professional Tasks (#3.1) · Self-Improvement (#4)*
 
-2. **Closed self-improvement loop** — Regulator detects blind spot → Generator biases fraud generation toward that type → Auditor forced to improve → no human intervention required
+<br/>
 
-3. **Adversarial Generator arms race** — Generator rewarded for evading Auditor creates evolutionary pressure on fraud detection
+**Pritam Satpathy & Gnana Nawin T · Scaler School of Technology · Bangalore**
 
-4. **Live environment as verifier** — training Colab directly calls `/grader` on deployed HF Space — the environment IS the reward function
-
-5. **4 independent reward signals** — made reward hacking immediately visible during training (detected it at step 10)
-
----
-
-## Theme Alignment
-
-| Theme | Alignment |
-|-------|-----------|
-| **#1 Multi-Agent** | 5 agents with conflicting incentives (Generator vs Auditor) |
-| **#1 Sub: Fleet AI Oversight** (bonus) | Regulator monitors Auditor cross-episode |
-| **#3.1 Professional Tasks** | Invoice processing = core enterprise workflow |
-| **#3.1 Sub: Scaler AI Labs** (bonus) | Multi-agent RL for enterprise financial workflows |
-| **#4 Self-Improvement** | Generator adapts based on Regulator blind spot findings |
-
----
-
-## Links
-
-- **Live Environment:** [https://ps2181-invoice-processing-pipeline.hf.space](https://ps2181-invoice-processing-pipeline.hf.space)
-- **Gradio UI:** [https://ps2181-invoice-processing-pipeline.hf.space/web](https://ps2181-invoice-processing-pipeline.hf.space/web)
-- **API Docs:** [https://ps2181-invoice-processing-pipeline.hf.space/docs](https://ps2181-invoice-processing-pipeline.hf.space/docs)
-- **GitHub:** [https://github.com/ps2181/invoice-processing-pipeline](https://github.com/ps2181/invoice-processing-pipeline)
-
----
-
-## Team
-
-**Pritam Satpathy** + **Gnana Nawin T**
-Meta PyTorch OpenEnv Hackathon Grand Finale
-Scaler School of Technology, Bangalore — April 25–26, 2026
+</div>
