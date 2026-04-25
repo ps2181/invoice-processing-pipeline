@@ -372,9 +372,9 @@ invoice-processing-pipeline/
 ├── inference.py                    # Standalone inference helper
 ├── client.py                       # OpenEnv-compatible Python client
 │
-├── extractor_training_grpo.ipynb   # 🔥 Extractor GRPO training (Unsloth + TRL)
-├── auditor_grpo_training.ipynb     # 🔥 Auditor GRPO training
-├── generator_grpo_training.ipynb   # 🔥 Generator GRPO training
+├── extractor_training_grpo.ipynb   # Extractor GRPO training (Unsloth + TRL)
+├── auditor_grpo_training.ipynb     # Auditor GRPO training
+├── generator_grpo_training.ipynb   # Generator GRPO training
 │
 ├── openenv.yaml                    # OpenEnv manifest (all 7 tasks declared)
 ├── Dockerfile                      # HF Spaces Docker (port 7860, non-root UID 1000)
@@ -493,7 +493,7 @@ else:                   # balanced
 | | |
 |:---:|:---:|
 | **Pritam Satpathy** | **Gnana Nawin T** |
-| [🤗 ps2181](https://huggingface.co/ps2181) | Gnana Nawin T |
+| [🤗 ps2181](https://huggingface.co/ps2181) | [🤗 gnananawin](https://huggingface.co/gnananawin) |
 | Scaler School of Technology | Scaler School of Technology |
 
 **Meta PyTorch OpenEnv Hackathon — Grand Finale · April 25–26, 2026 · Bangalore**
@@ -527,7 +527,5 @@ else:                   # balanced
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer&animation=twinkling" width="100%"/>
 
 **Built with ❤️ for the Meta PyTorch OpenEnv Hackathon 2026**
-
-*"The system that gets harder for itself — so the agent never stops learning."*
 
 </div>
