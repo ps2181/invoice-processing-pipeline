@@ -860,7 +860,6 @@ def build_ui() -> gr.Blocks:
                     label="Reward Curves",
                     value=_curves_fig,
                     type="pil",
-                    show_download_button=False,
                 )
 
                 gr.Markdown(
