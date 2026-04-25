@@ -120,10 +120,6 @@ Tracks `(confidence, correct?)` pairs per fraud type.<br/>Detects **overconfiden
 
 ## 🎯 Seven Tasks — Progressive Difficulty
 
-<div align="center">
-<img width="1384" height="367" alt="image" src="https://github.com/user-attachments/assets/a87f472d-3cfd-4947-a8b6-bd04cd08562f" />
-</div>
-
 | # | Task | Difficulty | What the Agent Must Do |
 |:---:|:---|:---:|:---|
 | 1 | `easy` | 🟢 Easy | Extract `vendor`, `date`, `currency`, `total`, `line_items` from a single clean invoice |
