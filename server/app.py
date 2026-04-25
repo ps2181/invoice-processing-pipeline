@@ -244,7 +244,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "reset":
                 task_id = data.get("task_id", "easy")
-                obs, reward, done, info = env.reset(task_id=task_id)
+                try:
+                    obs, reward, done, info = env.reset(task_id=task_id)
+                except Exception as e:
+                    await websocket.send_json({"type": "error", "data": {"message": str(e)}})
+                    continue
                 await websocket.send_json({
                     "type": "observation",
                     "data": {
@@ -363,10 +367,14 @@ def multi_audit(req: MultiAuditRequest):
     return result
 
 
+class MultiApproveRequest(BaseModel):
+    episode_id: str
+
+
 @app.post("/multi/approve")
-def multi_approve(episode_id: str):
+def multi_approve(req: MultiApproveRequest):
     """Run rule-based Approver. Computes Generator adversarial reward."""
-    result = handle_approve(episode_id)
+    result = handle_approve(req.episode_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result

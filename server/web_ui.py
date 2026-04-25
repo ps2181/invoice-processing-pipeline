@@ -446,173 +446,152 @@ def _get_regulator_report() -> str:
     return "\n".join(lines)
 
 
-def _make_training_curves():
+def _make_training_curves() -> str:
     """
-    Render training reward curves for all 3 GRPO-trained agents.
-    Data points from actual Colab training runs.
+    Render training reward curves. Returns base64-encoded HTML <img> tag.
+    Data from actual Colab training logs.
     """
+    import io, base64
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.gridspec as gridspec
     import numpy as np
 
-    # ── Real training data from Colab runs ────────────────────────────────────
+    # ── Exact data from Colab training logs ──────────────────────────────────
 
-    # Extractor — crashed at step 15–20 due to _MAX_SESSIONS=50 bug.
-    # Live /grader score peaked at 0.914 at step 15, then crashed.
-    # Total reward (4 signals summed): 2.39 → 3.06 → 3.39 (peak) → 2.94 (crash)
-    ext_steps_crash = [5, 10, 15, 20]
-    ext_live_crash  = [0.230, 0.750, 0.914, 0.230]   # live /grader score
-    ext_total_crash = [2.39,  3.06,  3.39,  2.94]    # sum of 4 reward signals
+    # Extractor: peaked 0.914 at step 15, then crashed (_MAX_SESSIONS=50 bug)
+    ext_steps = [5,     10,    15,    20]
+    ext_live  = [0.230, 0.750, 0.914, 0.230]
+    ext_total = [2.39,  3.06,  3.39,  2.94]
 
-    # Auditor — Run 1: episode_id list bug → live reward dead (flat ~0.01).
-    # Run 2 (bug fixed): live env reward climbed 0.28 → 0.40+ over 30 steps.
-    # Real log data from table:
-    aud_steps       = [5,     10,    15,    20,    25,    30]
-    aud_live_bad    = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]  # run 1 — dead
-    aud_live_good   = [0.283, 0.519, 0.254, 0.373, 0.333, 0.404]  # run 2 — fixed
-    aud_total_good  = [0.483, 0.719, 0.454, 0.573, 0.533, 0.604]  # total (incl format 0.20)
+    # Auditor run 2 — exact numbers from training log table
+    aud_steps      = [5,        10,       15,       20,       25,       30]
+    aud_live_bad   = [0.010,    0.010,    0.010,    0.010,    0.010,    0.010]
+    aud_live_good  = [0.282750, 0.518750, 0.253835, 0.373340, 0.332500, 0.403755]
+    aud_total_good = [0.482750, 0.718750, 0.453835, 0.573340, 0.532500, 0.603755]
+    aud_std        = [0.194365, 0.239377, 0.123136, 0.212295, 0.231516, 0.147087]
 
-    # Generator — Live evasion reward stuck at 0.01 (same episode_id list bug).
-    # Fraud plausibility (format/structure reward) did learn: ~0.19 → 0.22.
-    gen_steps          = [5,     10,    15,    20,    25,    30]
-    gen_live_evasion   = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]  # dead — bug
-    gen_plausibility   = [0.190, 0.230, 0.230, 0.245, 0.230, 0.220]  # format learned
+    # Generator: evasion dead (bug), format plausibility did learn
+    gen_steps   = [5,     10,    15,    20,    25,    30]
+    gen_evasion = [0.010, 0.010, 0.010, 0.010, 0.010, 0.010]
+    gen_plaus   = [0.190, 0.230, 0.230, 0.245, 0.230, 0.220]
 
-    # ── Plot ─────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(14, 10), facecolor="#0f172a")
-    gs  = gridspec.GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.35)
-
-    DARK_BG   = "#0f172a"
-    PANEL_BG  = "#1e293b"
-    GRID_COL  = "#334155"
-    TEXT_COL  = "#e2e8f0"
-    ACCENT    = "#60a5fa"
-    ORANGE    = "#fb923c"
-    GREEN     = "#4ade80"
-    RED       = "#f87171"
-    YELLOW    = "#facc15"
+    # ── Style ─────────────────────────────────────────────────────────────────
+    DARK   = "#0f172a"
+    PANEL  = "#1e293b"
+    GRID   = "#334155"
+    TEXT   = "#e2e8f0"
+    BLUE   = "#60a5fa"
+    ORANGE = "#fb923c"
+    GREEN  = "#4ade80"
+    RED    = "#f87171"
+    YELLOW = "#facc15"
 
     def _style(ax, title):
-        ax.set_facecolor(PANEL_BG)
-        ax.tick_params(colors=TEXT_COL, labelsize=9)
-        ax.xaxis.label.set_color(TEXT_COL)
-        ax.yaxis.label.set_color(TEXT_COL)
-        ax.title.set_color(TEXT_COL)
+        ax.set_facecolor(PANEL)
+        ax.tick_params(colors=TEXT, labelsize=9)
+        ax.xaxis.label.set_color(TEXT)
+        ax.yaxis.label.set_color(TEXT)
+        ax.title.set_color(TEXT)
         ax.set_title(title, fontsize=11, fontweight="bold", pad=10)
-        ax.grid(True, color=GRID_COL, linewidth=0.6, alpha=0.7)
-        for spine in ax.spines.values():
-            spine.set_edgecolor(GRID_COL)
+        ax.grid(True, color=GRID, linewidth=0.6, alpha=0.7)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(GRID)
 
-    # ── Panel 1: Extractor ───────────────────────────────────────────────────
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax1_r = ax1.twinx()
-    ax1.plot(ext_steps_crash, ext_live_crash, color=ORANGE, linewidth=2.5,
-             marker="o", markersize=6, label="Live /grader score (right axis)", zorder=3)
-    ax1_r.plot(ext_steps_crash, ext_total_crash, color=ACCENT, linewidth=2,
-               marker="s", markersize=5, linestyle="--", label="Total reward (4 signals)", zorder=2)
-    ax1.axvline(x=17, color=RED, linewidth=1.2, linestyle="--", alpha=0.8)
-    ax1.text(17.2, 0.15, "_MAX_SESSIONS\nbug → crash", color=RED, fontsize=7)
-    ax1.annotate("Peak 0.914", xy=(15, 0.914), xytext=(10.5, 0.80),
+    fig = plt.figure(figsize=(14, 10), facecolor=DARK)
+    gs  = gridspec.GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.38)
+
+    # Panel 1: Extractor
+    ax1  = fig.add_subplot(gs[0, 0])
+    ax1r = ax1.twinx()
+    ax1.plot(ext_steps, ext_live, color=ORANGE, lw=2.5, marker="o", ms=7,
+             label="Live /grader score", zorder=3)
+    ax1r.plot(ext_steps, ext_total, color=BLUE, lw=2, marker="s", ms=5,
+              linestyle="--", label="Total reward (4 signals)", zorder=2)
+    ax1.axvline(x=17, color=RED, lw=1.2, linestyle="--", alpha=0.8)
+    ax1.text(17.3, 0.10, "_MAX_SESSIONS\nbug → crash", color=RED, fontsize=7)
+    ax1.annotate("Peak 0.914", xy=(15, 0.914), xytext=(9, 0.75),
                  color=GREEN, fontsize=8, fontweight="bold",
                  arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.2))
     ax1.set_xlabel("Training Step")
     ax1.set_ylabel("Live Grader Score", color=ORANGE)
-    ax1_r.set_ylabel("Total Reward (4 signals)", color=ACCENT)
-    ax1.set_ylim(0, 1.1)
-    ax1_r.set_ylim(0, 4.5)
+    ax1r.set_ylabel("Total Reward (4 signals)", color=BLUE)
+    ax1.set_ylim(0, 1.15); ax1r.set_ylim(0, 4.5)
     ax1.tick_params(axis="y", colors=ORANGE)
-    ax1_r.tick_params(axis="y", colors=ACCENT)
-    ax1_r.set_facecolor(PANEL_BG)
-    for spine in ax1_r.spines.values():
-        spine.set_edgecolor(GRID_COL)
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax1_r.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=7,
-               facecolor=PANEL_BG, labelcolor=TEXT_COL, edgecolor=GRID_COL)
-    _style(ax1, "🔍 Extractor — Peak 0.914 live score")
+    ax1r.tick_params(axis="y", colors=BLUE)
+    ax1r.set_facecolor(PANEL)
+    for sp in ax1r.spines.values(): sp.set_edgecolor(GRID)
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax1r.get_legend_handles_labels()
+    ax1.legend(h1+h2, l1+l2, fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
+    _style(ax1, "Extractor — Peak 0.914 live score")
 
-    # ── Panel 2: Auditor ─────────────────────────────────────────────────────
+    # Panel 2: Auditor
     ax2 = fig.add_subplot(gs[0, 1])
-    ax2.plot(aud_steps, aud_live_bad, color=RED, linewidth=2,
-             marker="o", markersize=4, linestyle="--",
-             label="Run 1 — live reward dead (episode_id bug)")
-    ax2.plot(aud_steps, aud_live_good, color=ACCENT, linewidth=2.5,
-             marker="s", markersize=5, label="Run 2 — fixed, live reward flows")
-    ax2.plot(aud_steps, aud_total_good, color=GREEN, linewidth=1.5,
-             marker="^", markersize=4, linestyle=":", label="Run 2 — total reward")
-    ax2.axhline(y=0.20, color=GRID_COL, linewidth=1, linestyle=":",
-                alpha=0.7)
-    ax2.text(5.2, 0.205, "format baseline", color=GRID_COL, fontsize=7)
-    ax2.set_xlabel("Training Step")
-    ax2.set_ylabel("Reward")
-    ax2.set_ylim(0, 0.85)
-    ax2.legend(fontsize=7, facecolor=PANEL_BG, labelcolor=TEXT_COL,
-               edgecolor=GRID_COL)
-    _style(ax2, "🕵️ Auditor — 0.01 → 0.52 after bug fix")
+    lo  = [r - s for r, s in zip(aud_live_good, aud_std)]
+    hi  = [r + s for r, s in zip(aud_live_good, aud_std)]
+    ax2.fill_between(aud_steps, lo, hi, color=BLUE, alpha=0.15, label="±1 std (run 2)")
+    ax2.plot(aud_steps, aud_live_bad,   color=RED,   lw=2,   marker="o", ms=4,
+             linestyle="--", label="Run 1 — dead (episode_id bug)")
+    ax2.plot(aud_steps, aud_live_good,  color=BLUE,  lw=2.5, marker="s", ms=5,
+             label="Run 2 — live env reward")
+    ax2.plot(aud_steps, aud_total_good, color=GREEN, lw=1.8, marker="^", ms=4,
+             linestyle=":", label="Run 2 — total reward")
+    ax2.axhline(y=0.20, color=GRID, lw=1, linestyle=":", alpha=0.8)
+    ax2.text(5.2, 0.21, "format baseline (0.20)", color=GRID, fontsize=7)
+    ax2.set_xlabel("Training Step"); ax2.set_ylabel("Reward")
+    ax2.set_ylim(0, 0.95)
+    ax2.legend(fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
+    _style(ax2, "Auditor — 0.01 → 0.52 after bug fix")
 
-    # ── Panel 3: Generator ───────────────────────────────────────────────────
+    # Panel 3: Generator
     ax3 = fig.add_subplot(gs[1, 0])
-    ax3.plot(gen_steps, gen_live_evasion, color=RED, linewidth=2,
-             marker="o", markersize=4, label="Live evasion reward (dead — bug)")
-    ax3.plot(gen_steps, gen_plausibility, color=YELLOW, linewidth=2.5,
-             marker="s", markersize=5, linestyle="--",
-             label="Fraud plausibility (format learned)")
-    ax3.axhline(y=0.85, color=GREEN, linewidth=1, linestyle=":",
-                alpha=0.7)
-    ax3.text(5.2, 0.86, "max evasion reward (0.85)", color=GREEN, fontsize=7)
-    ax3.axhline(y=0.10, color=GRID_COL, linewidth=1, linestyle=":",
-                alpha=0.7)
-    ax3.text(5.2, 0.105, "caught baseline (0.10)", color=GRID_COL, fontsize=7)
-    ax3.set_xlabel("Training Step")
-    ax3.set_ylabel("Reward")
+    ax3.plot(gen_steps, gen_evasion, color=RED,    lw=2,   marker="o", ms=4,
+             label="Live evasion reward (dead — bug)")
+    ax3.plot(gen_steps, gen_plaus,   color=YELLOW, lw=2.5, marker="s", ms=5,
+             linestyle="--", label="Fraud plausibility / format")
+    ax3.axhline(y=0.85, color=GREEN, lw=1, linestyle=":", alpha=0.8)
+    ax3.text(5.2, 0.87, "max evasion reward (0.85)", color=GREEN, fontsize=7)
+    ax3.axhline(y=0.10, color=GRID, lw=1, linestyle=":", alpha=0.7)
+    ax3.text(5.2, 0.11, "caught baseline (0.10)", color=GRID, fontsize=7)
+    ax3.set_xlabel("Training Step"); ax3.set_ylabel("Reward")
     ax3.set_ylim(0, 1.0)
-    ax3.legend(fontsize=7, facecolor=PANEL_BG, labelcolor=TEXT_COL,
-               edgecolor=GRID_COL)
-    _style(ax3, "⚡ Generator — Format learned, evasion needs rerun")
+    ax3.legend(fontsize=7, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
+    _style(ax3, "Generator — Format learned, evasion needs rerun")
 
-    # ── Panel 4: Key results summary ─────────────────────────────────────────
+    # Panel 4: Baseline vs Best
     ax4 = fig.add_subplot(gs[1, 1])
-    metrics = [
-        ("Extractor\nlive score", 0.10, 0.914, "Peak before crash"),
-        ("Auditor\nlive reward", 0.010, 0.519, "Best step (run 2)"),
-        ("Auditor\ntotal reward", 0.20, 0.719, "Best step (run 2)"),
-    ]
-    labels_m  = [m[0] for m in metrics]
-    baseline_m = [m[1] for m in metrics]
-    best_m     = [m[2] for m in metrics]
-    notes_m    = [m[3] for m in metrics]
-    x = np.arange(len(metrics))
-    w = 0.35
-    ax4.bar(x - w/2, baseline_m, w, color=RED,   alpha=0.85, label="Baseline")
-    b2 = ax4.bar(x + w/2, best_m, w, color=GREEN, alpha=0.85, label="Best achieved")
-    for bar, val, note in zip(b2, best_m, notes_m):
+    metrics  = [("Extractor\nlive score", 0.10, 0.914),
+                ("Auditor\nlive reward",  0.01, 0.51875),
+                ("Auditor\ntotal reward", 0.20, 0.71875)]
+    lbl  = [m[0] for m in metrics]
+    base = [m[1] for m in metrics]
+    best = [m[2] for m in metrics]
+    x = np.arange(len(metrics)); w = 0.32
+    ax4.bar(x - w/2, base, w, color=RED,   alpha=0.85, label="Baseline (untrained)")
+    bars = ax4.bar(x + w/2, best, w, color=GREEN, alpha=0.85, label="Best achieved")
+    for bar, val in zip(bars, best):
         ax4.text(bar.get_x() + bar.get_width()/2, val + 0.02,
                  f"{val:.3f}", ha="center", va="bottom",
-                 color=TEXT_COL, fontsize=8, fontweight="bold")
-    ax4.set_xticks(x)
-    ax4.set_xticklabels(labels_m, fontsize=8)
-    ax4.set_ylabel("Reward / Score")
-    ax4.set_ylim(0, 1.1)
-    ax4.legend(fontsize=8, facecolor=PANEL_BG, labelcolor=TEXT_COL,
-               edgecolor=GRID_COL)
-    _style(ax4, "📊 Key Results — Baseline vs Best")
+                 color=TEXT, fontsize=8, fontweight="bold")
+    ax4.set_xticks(x); ax4.set_xticklabels(lbl, fontsize=8)
+    ax4.set_ylabel("Reward / Score"); ax4.set_ylim(0, 1.1)
+    ax4.legend(fontsize=8, facecolor=PANEL, labelcolor=TEXT, edgecolor=GRID)
+    _style(ax4, "Key Results — Baseline vs Best")
 
     fig.suptitle(
         "GRPO Training Results  ·  Qwen2.5-1.5B-Instruct + LoRA r=16  ·  TRL + Unsloth",
-        color=TEXT_COL, fontsize=12, fontweight="bold", y=0.98,
+        color=TEXT, fontsize=12, fontweight="bold", y=0.99,
     )
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-    import io
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=DARK)
     buf.seek(0)
     plt.close(fig)
-    from PIL import Image
-    return Image.open(buf)
+    b64 = base64.b64encode(buf.read()).decode()
+    return f'<img src="data:image/png;base64,{b64}" style="width:100%;border-radius:10px;margin-top:12px;" />'
 
 
 def _seed_demo_data() -> str:
@@ -852,15 +831,11 @@ def build_ui() -> gr.Blocks:
                 )
 
                 try:
-                    _curves_fig = _make_training_curves()
+                    _curves_html = _make_training_curves()
                 except Exception:
-                    _curves_fig = None
+                    _curves_html = "<p style='color:#f87171'>Could not render training curves.</p>"
 
-                curve_plot = gr.Image(
-                    label="Reward Curves",
-                    value=_curves_fig,
-                    type="pil",
-                )
+                gr.HTML(value=_curves_html)
 
                 gr.Markdown(
                     "**Model checkpoints:** "

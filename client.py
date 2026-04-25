@@ -33,12 +33,13 @@ class InvoiceEnvClient:
         resp.raise_for_status()
         return resp.json()
 
-    def step(self, extracted_data: Dict[str, Any], explanation: str = "") -> Dict[str, Any]:
+    def step(self, extracted_data: Dict[str, Any], explanation: str = "",
+             episode_id: Optional[str] = None) -> Dict[str, Any]:
         """Submit extracted/cleaned data and get reward + feedback."""
-        resp = self._client.post(
-            f"{self.base_url}/step",
-            json={"extracted_data": extracted_data, "explanation": explanation},
-        )
+        body: Dict[str, Any] = {"extracted_data": extracted_data, "explanation": explanation}
+        if episode_id is not None:
+            body["episode_id"] = episode_id
+        resp = self._client.post(f"{self.base_url}/step", json=body)
         resp.raise_for_status()
         return resp.json()
 
@@ -83,11 +84,12 @@ class AsyncInvoiceEnvClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def step(self, extracted_data: Dict[str, Any], explanation: str = "") -> Dict[str, Any]:
-        resp = await self._client.post(
-            f"{self.base_url}/step",
-            json={"extracted_data": extracted_data, "explanation": explanation},
-        )
+    async def step(self, extracted_data: Dict[str, Any], explanation: str = "",
+                   episode_id: Optional[str] = None) -> Dict[str, Any]:
+        body: Dict[str, Any] = {"extracted_data": extracted_data, "explanation": explanation}
+        if episode_id is not None:
+            body["episode_id"] = episode_id
+        resp = await self._client.post(f"{self.base_url}/step", json=body)
         resp.raise_for_status()
         return resp.json()
 

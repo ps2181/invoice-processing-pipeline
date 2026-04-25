@@ -34,6 +34,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from models import InvoiceAction, InvoiceObservation, InvoiceState
 
+try:
+    from openenv_core import Environment as _OpenEnvBase
+except Exception:
+    _OpenEnvBase = object  # graceful fallback if openenv_core unavailable
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1077,8 +1082,15 @@ def _grade_supply_chain(
 # Environment
 # ===================================================================
 
-class InvoiceEnvironment:
-    """Core invoice processing environment — 7 tasks with dynamic difficulty."""
+class InvoiceEnvironment(_OpenEnvBase):
+    """Core invoice processing environment — 7 tasks with dynamic difficulty.
+
+    Inherits from openenv_core.Environment. Supports concurrent sessions via
+    server-side session registry (app.py _sessions dict).
+    Uses Gym-style (obs, reward, done, info) returns for backward compatibility.
+    """
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     TASKS = {
         "easy": {
@@ -1158,6 +1170,10 @@ class InvoiceEnvironment:
     }
 
     def __init__(self):
+        try:
+            super().__init__()
+        except TypeError:
+            pass  # _OpenEnvBase may be object or require no args
         self._state = InvoiceState()
         self._ground_truth: Any = None
         self._raw_text: str = ""

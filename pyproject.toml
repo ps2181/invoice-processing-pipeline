@@ -16,7 +16,6 @@ dependencies = [
     "python-dotenv>=0.13",
     "openenv-core>=0.2.0",
     "gradio>=4.0.0",
-    "python-dotenv>=0.13",
 ]
 
 [project.scripts]

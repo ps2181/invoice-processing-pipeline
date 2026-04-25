@@ -613,12 +613,12 @@ def approver_decision(
 
 def _generate_expert_batch_biased(
     fraud_weights: Optional[Dict[str, float]] = None,
-) -> Tuple[List[Dict], List[Dict], str]:
+) -> Tuple[List[Dict], List[Dict], str, str]:
     """
     Generate an expert fraud audit batch with fraud type sampling biased
     by the Regulator's generator_weights().
 
-    Returns (invoices, ground_truth_list, reference_text).
+    Returns (invoices, ground_truth_list, raw_text, reference_text).
     Reuses generation helpers from environment.py.
     """
     import sys, os
