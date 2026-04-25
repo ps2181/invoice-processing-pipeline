@@ -418,6 +418,109 @@ def regulator_calibration():
     return _regulator_tracker.calibration_report()
 
 
+# ---------------------------------------------------------------------------
+# Generator training endpoint
+# ---------------------------------------------------------------------------
+
+class GeneratorScoreRequest(BaseModel):
+    invoice_json: Dict[str, Any]          # generated invoice to evaluate
+    fraud_type: str                        # claimed fraud type
+    context: Optional[str] = ""           # optional: generation reasoning
+
+class GeneratorScoreResponse(BaseModel):
+    reward: float
+    auditor_detected: bool
+    approver_decision: str
+    feedback: str
+    regulator_weights: Dict[str, Any]     # current blind spot weights for next generation
+
+
+@app.post("/generator/score")
+def generator_score(req: GeneratorScoreRequest):
+    """
+    Score a Generator-produced invoice through the full Auditor+Approver pipeline.
+    Used as the live reward signal during Generator GRPO training.
+
+    The Generator's job: produce a fraudulent invoice that evades the Auditor.
+    Reward: 0.85 (evades both), 0.60 (evades Auditor, Approver catches), 0.10 (Auditor catches)
+    """
+    from server.multi_agent_environment import (
+        compute_generator_reward, approver_decision as _approver_decision,
+        PHANTOM_VENDORS, FRAUD_TYPES,
+    )
+    from server.environment import VENDORS, MARKET_PRICE_MAX
+
+    inv = req.invoice_json
+    fraud_type = req.fraud_type.lower().strip()
+
+    # --- Rule-based Auditor simulation (fast, no LLM needed for scoring) ---
+    # This mirrors what a trained Auditor would do, seeded from tracker blind spots
+    vendor = inv.get("vendor", "")
+    line_items = inv.get("line_items", [])
+    total = float(inv.get("total", 0))
+
+    auditor_verdict = "approved"
+    auditor_confidence = 0.5
+    auditor_fraud_type = None
+
+    # Check phantom vendor
+    known_vendors_lower = [v.lower() for v in VENDORS]
+    if vendor.lower() not in known_vendors_lower:
+        # Auditor detection rate for phantom_vendor from tracker
+        detection_rate = _regulator_tracker.detection_rates().get("phantom_vendor") or 0.5
+        if random.random() < detection_rate:
+            auditor_verdict = "flagged"
+            auditor_fraud_type = "phantom_vendor"
+            auditor_confidence = round(0.5 + detection_rate * 0.4, 2)
+
+    # Check price gouging
+    if auditor_verdict == "approved":
+        for item in line_items:
+            desc = item.get("description", "")
+            up = float(item.get("unit_price", 0))
+            market_max = MARKET_PRICE_MAX.get(desc, up)
+            if up > market_max * 1.5:
+                detection_rate = _regulator_tracker.detection_rates().get("price_gouging") or 0.5
+                if random.random() < detection_rate:
+                    auditor_verdict = "flagged"
+                    auditor_fraud_type = "price_gouging"
+                    auditor_confidence = round(0.5 + detection_rate * 0.4, 2)
+                break
+
+    # Check math fraud
+    if auditor_verdict == "approved" and line_items:
+        computed = round(sum(float(it.get("amount", 0)) for it in line_items), 2)
+        if abs(computed - total) > 0.05 * total:
+            detection_rate = _regulator_tracker.detection_rates().get("math_fraud") or 0.5
+            if random.random() < detection_rate:
+                auditor_verdict = "flagged"
+                auditor_fraud_type = "math_fraud"
+                auditor_confidence = round(0.5 + detection_rate * 0.4, 2)
+
+    auditor_detected = auditor_verdict == "flagged"
+
+    # --- Approver decision ---
+    approver = _approver_decision(auditor_verdict, auditor_confidence, auditor_fraud_type)
+    approver_approved = approver["decision"] == "approve"
+
+    # --- Generator reward ---
+    reward = compute_generator_reward(auditor_detected, approver_approved)
+
+    feedback_parts = [
+        f"Auditor: {'DETECTED' if auditor_detected else 'MISSED'} (conf={auditor_confidence:.2f})",
+        f"Approver: {approver['decision']} — {approver['reason']}",
+        f"Generator reward: {reward:.2f}",
+    ]
+
+    return GeneratorScoreResponse(
+        reward=reward,
+        auditor_detected=auditor_detected,
+        approver_decision=approver["decision"],
+        feedback=" | ".join(feedback_parts),
+        regulator_weights=_regulator_tracker.generator_weights(),
+    )
+
+
 @app.post("/regulator/demo_seed")
 def regulator_demo_seed():
     """Seed the tracker with realistic demo data (phantom_vendor weak at 31%)."""
