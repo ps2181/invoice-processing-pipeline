@@ -146,7 +146,7 @@ def _clamp_score(score: float) -> float:
 
 _PERF_HISTORY: Dict[str, collections.deque] = {
     task: collections.deque(maxlen=10)
-    for task in ["easy", "medium", "hard", "expert", "adversarial", "negotiate", "supply_chain"]
+    for task in ["easy", "medium", "hard", "expert", "adversarial", "negotiate", "supply_chain", "long_horizon", "personalized", "curriculum"]
 }
 _PERF_LOCK = threading.Lock()
 
@@ -1224,6 +1224,53 @@ def _generate_invoice_targeting(weak_field: str) -> Dict:
 
 
 # ===================================================================
+# TASK: CURRICULUM — auto-progressive difficulty
+# ===================================================================
+
+_CURRICULUM_STAGE_NAMES = {1: "easy", 2: "medium", 3: "hard", 4: "expert"}
+_CURRICULUM_PROMOTE = 0.80   # score >= this → advance stage
+_CURRICULUM_HOLD    = 0.40   # score < this → stay (don't advance)
+
+
+def _curriculum_generate(stage: int) -> Tuple[str, Any, Any, str]:
+    """Generate data for the given curriculum stage. Returns (raw_text, gt, extra, reference_data)."""
+    if stage == 1:
+        inv = _generate_invoice()
+        return _render_clean_invoice(inv), inv, None, ""
+    elif stage == 2:
+        n = random.randint(2, 3)
+        clean = [_generate_invoice() for _ in range(n)]
+        messy = [_make_messy_invoice(copy.deepcopy(inv)) for inv in clean]
+        return _render_messy_batch(messy), clean, None, ""
+    elif stage == 3:
+        n = random.randint(2, 3)
+        clean = [_generate_invoice() for _ in range(n)]
+        disc_list, po_texts = [], []
+        for inv in clean:
+            po, discs = _generate_purchase_order(inv)
+            disc_list.append(discs)
+            po_texts.append(_render_po(po))
+        messy = [_make_messy_invoice(copy.deepcopy(inv)) for inv in clean]
+        return _render_messy_batch(messy), clean, disc_list, "\n\n".join(po_texts)
+    else:  # stage 4
+        invoices, gt, _, ref = _generate_expert_batch()
+        return _render_expert_batch(invoices), invoices, gt, ref
+
+
+def _curriculum_grade(stage: int, data: Dict, gt: Any, extra: Any) -> Tuple[float, str]:
+    """Grade a curriculum submission for the given stage."""
+    if stage == 1:
+        score, feedback = _grade_easy(data, gt)
+    elif stage == 2:
+        score, feedback = _grade_medium(data, gt)
+    elif stage == 3:
+        score, feedback = _grade_hard(data, gt, extra)
+    else:
+        score, feedback = _grade_expert(data, extra)
+    return score, feedback
+
+
+# ===================================================================
 # Environment
 # ===================================================================
 
@@ -1342,6 +1389,20 @@ class InvoiceEnvironment(_OpenEnvBase):
             ),
             "max_attempts": 10,
         },
+        "curriculum": {
+            "description": (
+                "Auto-progressive curriculum: the environment promotes you through difficulty levels "
+                "based on your performance.\n"
+                "Stage 1 (easy): single clean invoice — {vendor, date, currency, total, line_items}.\n"
+                "Stage 2 (medium): messy invoice batch requiring cleaning — {invoices: [...]}.\n"
+                "Stage 3 (hard): extraction + PO reconciliation — {invoices: [...], discrepancies: [...]}.\n"
+                "Stage 4 (expert): fraud audit — {audit_results: [{invoice_id, verdict, fraud_type, evidence}]}.\n"
+                "Score ≥0.80 on a stage to advance. Drop below 0.40 to be held back. "
+                "Each observation shows your current stage and promotion threshold. "
+                "The episode runs for up to 20 steps across all stages."
+            ),
+            "max_attempts": 20,
+        },
     }
 
     def __init__(self):
@@ -1371,6 +1432,11 @@ class InvoiceEnvironment(_OpenEnvBase):
         self._personalized_field_scores: Dict[str, List[float]] = {
             "vendor": [], "date": [], "math": [], "completeness": []
         }
+        # Curriculum state
+        self._curriculum_stage: int = 1   # 1=easy 2=medium 3=hard 4=expert
+        self._curriculum_stage_scores: List[float] = []
+        self._curriculum_gt: Any = None
+        self._curriculum_extra: Any = None  # discrepancies or expert_gt
 
     def reset(self, task_id: str = "easy") -> Tuple[InvoiceObservation, float, bool, Dict]:
         """Reset the environment for a new episode."""
@@ -1457,7 +1523,6 @@ class InvoiceEnvironment(_OpenEnvBase):
             self._lh_invoices = [_generate_invoice() for _ in range(3)]
             self._lh_gt = copy.deepcopy(self._lh_invoices)
             po_texts = []
-            self._lh_expert_gt = []
             disc_list = []
             for inv in self._lh_invoices:
                 po, discs = _generate_purchase_order(inv)
@@ -1465,10 +1530,34 @@ class InvoiceEnvironment(_OpenEnvBase):
                 disc_list.append(discs)
             self._expected_discrepancies = disc_list
             self._lh_po_texts = po_texts
-            # Expert audit data for phase 3
-            exp_invs, exp_gt, _, ref_text = _generate_expert_batch()
-            self._lh_expert_gt = exp_gt
-            self._lh_reference = ref_text
+            # Phase 3 audits the SAME phase-1 invoices (inject fraud into some)
+            n_fraudulent = random.randint(1, 2)
+            fraud_indices = random.sample(range(len(self._lh_invoices)), n_fraudulent)
+            fraud_pool = ["phantom_vendor", "price_gouging", "math_fraud"]
+            self._lh_expert_gt = []
+            for i, inv in enumerate(self._lh_invoices):
+                if i in fraud_indices:
+                    ftype = random.choice(fraud_pool)
+                    if ftype == "phantom_vendor":
+                        inv["vendor"] = random.choice(PHANTOM_VENDORS)
+                    elif ftype == "price_gouging":
+                        item = random.choice(inv["line_items"])
+                        item["unit_price"] = round(
+                            MARKET_PRICE_MAX.get(item["description"], item["unit_price"]) * 1.8, 2
+                        )
+                        item["amount"] = round(item["qty"] * item["unit_price"], 2)
+                        inv["total"] = round(sum(it["amount"] for it in inv["line_items"]), 2)
+                    elif ftype == "math_fraud":
+                        inv["total"] = round(inv["total"] * 1.12, 2)
+                    self._lh_expert_gt.append({
+                        "invoice_id": inv["invoice_id"], "verdict": "flagged", "fraud_type": ftype
+                    })
+                else:
+                    self._lh_expert_gt.append({
+                        "invoice_id": inv["invoice_id"], "verdict": "approved", "fraud_type": None
+                    })
+            # Reference text for phase 3 (vendor registry + price catalog)
+            self._lh_reference = _render_expert_reference([])
             # Phase 1: show raw invoices only
             self._state.phase = 1
             self._state.phase_context = ""
@@ -1486,6 +1575,12 @@ class InvoiceEnvironment(_OpenEnvBase):
             self._personalized_invoice = _make_messy_invoice(copy.deepcopy(inv))
             self._raw_text = _render_messy_batch([self._personalized_invoice])
             self._reference_data = ""
+
+        elif task_id == "curriculum":
+            self._curriculum_stage = 1
+            self._curriculum_stage_scores = []
+            self._raw_text, self._curriculum_gt, self._curriculum_extra, self._reference_data = \
+                _curriculum_generate(1)
 
         task_info = self.TASKS[task_id]
         obs = InvoiceObservation(
@@ -1613,6 +1708,31 @@ class InvoiceEnvironment(_OpenEnvBase):
             self._personalized_invoice = _make_messy_invoice(copy.deepcopy(inv))
             self._raw_text = _render_messy_batch([self._personalized_invoice])
 
+        elif task_id == "curriculum":
+            score, feedback = _curriculum_grade(
+                self._curriculum_stage, action.extracted_data,
+                self._curriculum_gt, self._curriculum_extra,
+            )
+            self._curriculum_stage_scores.append(score)
+            stage_name = _CURRICULUM_STAGE_NAMES.get(self._curriculum_stage, "expert")
+            # Promote if score good enough and not already at stage 4
+            if score >= _CURRICULUM_PROMOTE and self._curriculum_stage < 4:
+                self._curriculum_stage += 1
+                new_stage_name = _CURRICULUM_STAGE_NAMES[self._curriculum_stage]
+                self._raw_text, self._curriculum_gt, self._curriculum_extra, self._reference_data = \
+                    _curriculum_generate(self._curriculum_stage)
+                feedback += f" | PROMOTED to Stage {self._curriculum_stage} ({new_stage_name})!"
+            elif score < _CURRICULUM_HOLD:
+                # Regenerate same stage (new data, same difficulty)
+                self._raw_text, self._curriculum_gt, self._curriculum_extra, self._reference_data = \
+                    _curriculum_generate(self._curriculum_stage)
+                feedback += f" | Staying at Stage {self._curriculum_stage} ({stage_name}) — score too low."
+            else:
+                # Regenerate same stage with new data
+                self._raw_text, self._curriculum_gt, self._curriculum_extra, self._reference_data = \
+                    _curriculum_generate(self._curriculum_stage)
+                feedback += f" | Stage {self._curriculum_stage} ({stage_name}) — keep improving."
+
         # Record for dynamic difficulty
         _record_score(task_id, score)
 
@@ -1620,7 +1740,11 @@ class InvoiceEnvironment(_OpenEnvBase):
         self._state.last_reward = score
         self._state.rewards.append(score)
 
-        done = score >= 0.95 or attempt >= task_info["max_attempts"]
+        # long_horizon/personalized/curriculum: run full step budget
+        if task_id in ("long_horizon", "personalized", "curriculum"):
+            done = attempt >= task_info["max_attempts"]
+        else:
+            done = score >= 0.95 or attempt >= task_info["max_attempts"]
         self._state.done = done
 
         reward = score
@@ -1667,6 +1791,13 @@ class InvoiceEnvironment(_OpenEnvBase):
                     f"Weakest field: {min(self._state.agent_profile, key=lambda k: self._state.agent_profile[k])} "
                     f"(accuracy {min(self._state.agent_profile.values()):.0%}). "
                     "Next invoice targets that field. Fix your blind spot to maximise reward."
+                ),
+                "curriculum": (
+                    f"Current stage: {self._curriculum_stage}/4 "
+                    f"({_CURRICULUM_STAGE_NAMES.get(self._curriculum_stage, 'expert')}). "
+                    f"Score ≥0.80 to advance. "
+                    "Stage 1: easy extraction. Stage 2: messy batch cleaning. "
+                    "Stage 3: PO reconciliation. Stage 4: fraud audit."
                 ),
             }
             hint = hints.get(task_id, "")

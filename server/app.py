@@ -219,6 +219,21 @@ def grader(req: StepRequest):
         score, feedback = _grade_supply_chain(
             action.extracted_data, env._expected_sc_anomalies
         )
+    elif task_id == "long_horizon":
+        from server.environment import _grade_long_horizon
+        score, feedback = _grade_long_horizon(
+            action.extracted_data, env._state, env._lh_gt,
+            env._expected_discrepancies, env._lh_expert_gt, env._lh_po_texts,
+        )
+    elif task_id == "personalized":
+        from server.environment import _grade_personalized
+        score, feedback, _ = _grade_personalized(action.extracted_data, env._personalized_gt)
+    elif task_id == "curriculum":
+        from server.environment import _curriculum_grade
+        score, feedback = _curriculum_grade(
+            env._curriculum_stage, action.extracted_data,
+            env._curriculum_gt, env._curriculum_extra,
+        )
     else:  # expert
         from server.environment import _grade_expert
         score, feedback = _grade_expert(action.extracted_data, env._expert_ground_truth)
@@ -535,6 +550,37 @@ def generator_score(req: GeneratorScoreRequest):
         feedback=" | ".join(feedback_parts),
         regulator_weights=_regulator_tracker.generator_weights(),
     )
+
+
+@app.get("/metrics")
+def metrics():
+    """Environment-wide aggregate metrics: episode counts, per-task averages, all-time bests."""
+    from server.environment import _PERF_HISTORY, _PERF_LOCK
+    with _PERF_LOCK:
+        per_task = {}
+        total_episodes = 0
+        for task_id, history in _PERF_HISTORY.items():
+            h = list(history)
+            total_episodes += len(h)
+            if h:
+                per_task[task_id] = {
+                    "episodes": len(h),
+                    "avg_score": round(sum(h) / len(h), 4),
+                    "best_score": round(max(h), 4),
+                    "latest_score": round(h[-1], 4),
+                }
+            else:
+                per_task[task_id] = {"episodes": 0, "avg_score": None, "best_score": None, "latest_score": None}
+
+    with _lock:
+        active_sessions = len(_sessions)
+
+    return {
+        "total_episodes": total_episodes,
+        "active_sessions": active_sessions,
+        "per_task": per_task,
+        "regulator": _regulator_tracker.report(),
+    }
 
 
 @app.post("/regulator/demo_seed")

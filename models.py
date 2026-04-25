@@ -46,7 +46,7 @@ class InvoiceObservation(BaseModel):
     """What the agent sees each turn."""
 
     raw_text: str = Field(..., description="Raw invoice text (OCR-style or CSV-style)")
-    task_id: str = Field(..., description="easy | medium | hard | expert | adversarial | negotiate | supply_chain | long_horizon | personalized")
+    task_id: str = Field(..., description="easy | medium | hard | expert | adversarial | negotiate | supply_chain | long_horizon | personalized | curriculum")
     difficulty: str = Field(..., description="Same as task_id")
     task_description: str = Field(..., description="What the agent should do")
     attempt_number: int = Field(default=0, description="Current attempt (0 = just reset)")
