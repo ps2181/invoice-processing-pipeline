@@ -210,6 +210,7 @@ Colab → /reset  (fresh synthetic invoice from live environment)
 | **Extractor Model** | [ps2181/extractor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b) |
 | **Auditor Model** | [ps2181/auditor-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b) |
 | **Generator Model** | [ps2181/generator-lora-qwen2.5-1.5b](https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b) |
+|  **Demo Video** | [video](https://youtu.be/QSB4UOLvaC8?si=SGnIwsfTW4JGsU3e) |
 
 </div>
 
