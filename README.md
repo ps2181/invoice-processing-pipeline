@@ -162,16 +162,22 @@ All 3 agents trained with **TRL GRPOTrainer + Unsloth** using the deployed HF Sp
 ### Extractor Reward Curve
 
 ![Extractor Training](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/reward_curve.png)
+*X-axis: training step (1–20) · Y-axis: reward (0–1). Left: total GRPO reward across 4 independent signals (format 0.10 + field accuracy 0.40 + math 0.25 + completeness 0.25). Right: live `/grader` score peaking at **0.914** — above Qwen 72B baseline (0.67) and untrained 1.5B (0.46).*
+
 *Left: Total GRPO reward across 4 signals (format + field + math + completeness) over 20 training steps. Right: Live environment grader score peaking at **0.914** — above Qwen 72B baseline (0.67) and untrained 1.5B baseline (0.46).*
 
 ### Auditor Reward Curve (Run 2 — Bug Fixed)
 
 ![Auditor Training Run 2](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/auditor_reward_curve_run2.png)
+*X-axis: training step (1–30) · Y-axis: reward (0–1). Total reward (blue) and live env reward (orange) with ±1 std band. Best total: **0.719** at step 10. Live env reward climbed from 0.01 (dead signal, Run 1) to **0.52** after fixing the TRL episode_id list indexing bug.*
+
 *Total reward (blue) and live env reward (orange) over 30 steps with ±1 std band. Best total reward: **0.719**. Live env reward rose from 0.01 (dead signal in Run 1) to **0.52** after fixing the episode_id list bug.*
 
 ### Generator Reward Curve
 
 ![Generator Training](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/generator_reward_curve.png)
+*X-axis: training step (1–30) · Y-axis: reward (0–1). Live evasion reward (red) flat near 0 — Auditor+Approver caught all fraud attempts. Fraud plausibility reward (orange dashed) stable at ~0.20 — Generator learned realistic invoice structure even without successful evasion.*
+
 *Live evasion reward (red) flat near 0 — Auditor+Approver caught all fraud attempts. Fraud plausibility reward (orange dashed) learned and stable at ~0.20, showing the Generator learned to produce realistic-looking invoices even without successful evasion.*
 
 ### 🔍 Reward Hacking Caught at Step 10
