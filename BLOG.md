@@ -6,8 +6,10 @@
 **and automatically gets harder when it finds its own blind spots.**
 
 <br/>
-**Pritam Satpathy & Gnana Nawin T · VIT, Vellore**
-**Meta PyTorch OpenEnv Hackathon · Grand Finale · April 25–26, 2026**  
+
+*Pritam Satpathy & Gnana Nawin T · VIT, Vellore*
+
+*Meta PyTorch OpenEnv Hackathon · Grand Finale · April 25–26, 2026*  
 
 
 </div>
