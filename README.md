@@ -32,7 +32,7 @@
 
 > **Meta PyTorch OpenEnv Hackathon — Grand Finale · April 25–26, 2026**
 >
-> Team: **Pritam Satpathy** & **Gnana Nawin T** · Scaler School of Technology, Bangalore
+> Team: **Pritam Satpathy** & **Gnana Nawin T** · VIT, Vellore
 
 <br/>
 
