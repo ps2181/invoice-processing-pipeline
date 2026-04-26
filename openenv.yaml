@@ -1,20 +1,24 @@
 name: invoice_processing_pipeline
 version: "1.0.0"
 description: >
-  An OpenEnv environment for training AI agents on real-world invoice processing:
-  data extraction from OCR text, batch cleaning & normalisation, and
-  reconciliation against purchase orders with discrepancy detection.
+  A self-improving 5-agent adversarial RL environment for invoice fraud detection.
+  A cross-episode Regulator monitors the Auditor's blind spots and biases the Generator
+  to produce harder fraud — closing a self-improvement loop without human intervention.
+  10 tasks from easy extraction to 20-step long-horizon investigations and adaptive
+  personalized curricula.
 
-author: "OpenEnv Challenge Submission"
+author: "Pritam Satpathy & Gnana Nawin T"
 license: "MIT"
 
 tags:
   - openenv
   - invoice
-  - data-extraction
-  - data-cleaning
-  - reconciliation
+  - fraud-detection
+  - multi-agent
+  - self-improvement
+  - grpo
   - finance
+  - curriculum
 
 environment:
   module: server.app
@@ -57,6 +61,21 @@ tasks:
     name: "Supply Chain Anomaly Detection"
     description: "Identify quantity shortfalls, price spikes, unauthorized substitutions, and phantom deliveries in a set of supply chain delivery records."
     difficulty: expert
+
+  - id: long_horizon
+    name: "Long-Horizon Financial Investigation"
+    description: "20-step, 4-phase investigation with sparse rewards. Phase 1: extract 3 invoices. Phase 2: reconcile against POs (unlocked). Phase 3: fraud audit (registry unlocked). Phase 4: risk forecast. Each phase completion required to unlock next phase's reference data."
+    difficulty: expert
+
+  - id: personalized
+    name: "Personalized Adaptive Task"
+    description: "Tracks per-field accuracy (vendor, date, math, completeness) across steps and generates the next invoice to target the agent's weakest field. Reward weighted toward the historically weakest category."
+    difficulty: adaptive
+
+  - id: curriculum
+    name: "Auto-Progressive Curriculum"
+    description: "Automatically progresses the agent through easy→medium→hard→expert based on score. Score ≥0.80 to advance to next stage. Score <0.40 to be held back. Up to 20 steps across all stages."
+    difficulty: adaptive
 
 endpoints:
   reset: /reset

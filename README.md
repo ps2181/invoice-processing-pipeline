@@ -160,13 +160,15 @@ Dynamic difficulty also adjusts **within** each task via a rolling 10-episode sc
 
 All 3 agents trained with **TRL GRPOTrainer + Unsloth** using the deployed HF Space as the live reward verifier — `/grader` endpoint *is* the reward function during training.
 
+### Before vs After Training
+
 <div align="center">
 
-| Agent | Baseline | Best Achieved | Notes |
-|:---:|:---:|:---:|:---|
-| 🔍 **Extractor** | 0.10 (random) | **0.914** live grader | Peaked step 15 — above Qwen 72B baseline (0.67) |
-| 🕵️ **Auditor** | 0.01 (dead signal) | **0.719** total reward | Run 1 had episode_id bug; Run 2 → 0.01→0.52 live reward |
-| ⚡ **Generator** | — | Format learned (~0.22) | Plausibility reward improved; evasion had same bug as Run 1 |
+| Agent | Untrained (random) | Qwen 72B baseline | After GRPO | Improvement |
+|:---:|:---:|:---:|:---:|:---:|
+| 🔍 **Extractor** | 0.10 | 0.67 | **0.914** | +714% vs random |
+| 🕵️ **Auditor** | 0.01 | — | **0.52** live reward | Dead → active signal |
+| ⚡ **Generator** | — | — | **0.22** plausibility | Format & realism learned |
 
 </div>
 
@@ -175,14 +177,17 @@ All 3 agents trained with **TRL GRPOTrainer + Unsloth** using the deployed HF Sp
 ### Extractor Reward Curve
 
 ![Extractor Training](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/reward_curve.png)
+*Left: Total GRPO reward across 4 signals (format + field + math + completeness) over 20 training steps. Right: Live environment grader score peaking at **0.914** — above Qwen 72B baseline (0.67) and untrained 1.5B baseline (0.46).*
 
-### Auditor Reward Curve (Run 2)
+### Auditor Reward Curve (Run 2 — Bug Fixed)
 
 ![Auditor Training Run 2](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/auditor_reward_curve_run2.png)
+*Total reward (blue) and live env reward (orange) over 30 steps with ±1 std band. Best total reward: **0.719**. Live env reward rose from 0.01 (dead signal in Run 1) to **0.52** after fixing the episode_id list bug.*
 
 ### Generator Reward Curve
 
 ![Generator Training](https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/generator_reward_curve.png)
+*Live evasion reward (red) flat near 0 — Auditor+Approver caught all fraud attempts. Fraud plausibility reward (orange dashed) learned and stable at ~0.20, showing the Generator learned to produce realistic-looking invoices even without successful evasion.*
 
 ### 🔍 Reward Hacking Caught at Step 10
 
@@ -416,7 +421,7 @@ invoice-processing-pipeline/
 ├── pyproject.toml                  # Project metadata + dependencies
 ├── requirements.txt                # Runtime dependencies
 ├── validate-submission.sh          # Submission validator script
-├── Blog.md                         # HuggingFace blog post
+├── BLOG.md                         # HuggingFace blog post
 └── ROUND2_PROBLEM_STATEMENT.md     # Full problem statement + reward design rationale
 ```
 
@@ -522,12 +527,13 @@ invoice-processing-pipeline/
 | 🖥️ **Gradio Demo UI** | https://ps2181-invoice-processing-pipeline.hf.space/web |
 | 📖 **API Documentation** | https://ps2181-invoice-processing-pipeline.hf.space/docs |
 | 📊 **Metrics Dashboard** | https://ps2181-invoice-processing-pipeline.hf.space/metrics |
+| 📝 **Blog Post** | https://github.com/ps2181/invoice-processing-pipeline/blob/main/BLOG.md |
 | 🤗 **Extractor Model** | https://huggingface.co/ps2181/extractor-lora-qwen2.5-1.5b |
 | 🕵️ **Auditor Model** | https://huggingface.co/ps2181/auditor-lora-qwen2.5-1.5b |
 | ⚡ **Generator Model** | https://huggingface.co/ps2181/generator-lora-qwen2.5-1.5b |
-| 📓 **Training Colab(Auditor Agent)** | https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB |
-| 📓 **Training Colab(Extractor Agent)** | https://colab.research.google.com/drive/1fxfBt13LjmT4m98pJq-b5B__1ytFeszK?usp=sharing |
-| 📓 **Training Colab(Generator Agent)** | https://colab.research.google.com/drive/1O293_VBZQCthxlGpgvz5kxoty3zcsWGH?usp=sharing |
+| 📓 **Training Colab (Auditor Agent)** | https://colab.research.google.com/drive/1C1_3giNt-NmbzKNFJr5_L1fms3L8LfmB |
+| 📓 **Training Colab (Extractor Agent)** | https://colab.research.google.com/drive/1fxfBt13LjmT4m98pJq-b5B__1ytFeszK?usp=sharing |
+| 📓 **Training Colab (Generator Agent)** | https://colab.research.google.com/drive/1O293_VBZQCthxlGpgvz5kxoty3zcsWGH?usp=sharing |
 | 💻 **GitHub** | https://github.com/ps2181/invoice-processing-pipeline |
 | 🧩 **OpenEnv Framework** | https://github.com/meta-pytorch/OpenEnv |
 
