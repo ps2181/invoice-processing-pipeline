@@ -82,3 +82,25 @@ endpoints:
   step: /step
   state: /state
   health: /health
+  grader: /grader
+  tasks: /tasks
+  metrics: /metrics
+  websocket: /ws
+
+multi_agent_endpoints:
+  multi_reset: /multi/reset
+  multi_extract: /multi/extract
+  multi_audit: /multi/audit
+  multi_approve: /multi/approve
+  multi_state: /multi/state/{episode_id}
+
+regulator_endpoints:
+  report: /regulator/report
+  forecast: /regulator/forecast
+  calibration: /regulator/calibration
+  predict: /regulator/predict
+  generator_score: /generator/score
+
+ui:
+  gradio: /web
+  swagger: /docs
