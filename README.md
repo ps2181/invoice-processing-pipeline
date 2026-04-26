@@ -520,7 +520,7 @@ invoice-processing-pipeline/
 | 📓 **Training Colab (Extractor Agent)** | https://colab.research.google.com/drive/1fxfBt13LjmT4m98pJq-b5B__1ytFeszK?usp=sharing |
 | 📓 **Training Colab (Generator Agent)** | https://colab.research.google.com/drive/1O293_VBZQCthxlGpgvz5kxoty3zcsWGH?usp=sharing |
 | 💻 **GitHub** | https://github.com/ps2181/invoice-processing-pipeline |
-| 🎥 **Demo Video** | [video](https://youtu.be/QSB4UOLvaC8?si=SGnIwsfTW4JGsU3e) |
+| 🎥 **Demo Video** | https://youtu.be/QSB4UOLvaC8?si=SGnIwsfTW4JGsU3e |
 | 🧩 **OpenEnv Framework** | https://github.com/meta-pytorch/OpenEnv |
 
 </div>
