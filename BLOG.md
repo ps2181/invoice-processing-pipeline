@@ -1,11 +1,3 @@
----
-title: "When the System Learns to Pressure-Test Itself"
-thumbnail: https://raw.githubusercontent.com/ps2181/invoice-processing-pipeline/main/assets/reward_curve.png
-authors:
-  - user: ps2181 
-  - user: gnananawin
----
-
 <div align="center">
 
 # When the System Learns to Pressure-Test Itself
