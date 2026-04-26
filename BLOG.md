@@ -226,6 +226,6 @@ Colab → /reset  (fresh synthetic invoice from live environment)
 
 <br/>
 
-**Pritam Satpathy & Gnana Nawin T · Scaler School of Technology · Bangalore**
+**Pritam Satpathy & Gnana Nawin T · VIT, Vellore**
 
 </div>
